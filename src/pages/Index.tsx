@@ -1,16 +1,95 @@
-// Update this page (the content is just a fallback if you fail to update the page)
+import { useState, useCallback } from "react";
+import { motion } from "framer-motion";
+import { Clapperboard } from "lucide-react";
+import ReelUrlInput from "@/components/ReelUrlInput";
+import CharacterUploader, { type Character } from "@/components/CharacterUploader";
+import AudioPreview from "@/components/AudioPreview";
+import GeneratePanel from "@/components/GeneratePanel";
 
-// IMPORTANT: Fully REPLACE this with your own code
-const PlaceholderIndex = () => {
-  // PLACEHOLDER: Replace this entire return statement with the user's app.
-  // The inline background color is intentionally not part of the design system.
+const Index = () => {
+  const [reelUrl, setReelUrl] = useState("");
+  const [isLoadingReel, setIsLoadingReel] = useState(false);
+  const [reelLoaded, setReelLoaded] = useState(false);
+  const [characters, setCharacters] = useState<Character[]>([]);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [progress, setProgress] = useState(0);
+
+  const handleReelSubmit = useCallback((url: string) => {
+    setReelUrl(url);
+    setIsLoadingReel(true);
+    // Simulate loading for now
+    setTimeout(() => {
+      setIsLoadingReel(false);
+      setReelLoaded(true);
+    }, 1500);
+  }, []);
+
+  const handleGenerate = useCallback(() => {
+    setIsGenerating(true);
+    setProgress(0);
+    // Simulate generation progress
+    const interval = setInterval(() => {
+      setProgress((p) => {
+        if (p >= 100) {
+          clearInterval(interval);
+          setIsGenerating(false);
+          return 100;
+        }
+        return p + Math.random() * 8;
+      });
+    }, 300);
+  }, []);
+
+  const canGenerate = reelLoaded && characters.length > 0 && !isGenerating;
+
   return (
-    <div className="flex min-h-screen items-center justify-center" style={{ backgroundColor: '#fcfbf8' }}>
-      <img data-lovable-blank-page-placeholder="REMOVE_THIS" src="/placeholder.svg" alt="Your app will live here!" />
+    <div className="min-h-screen bg-background relative overflow-hidden">
+      {/* Ambient background effects */}
+      <div className="pointer-events-none absolute inset-0">
+        <div className="absolute top-[-20%] left-[-10%] w-[500px] h-[500px] rounded-full bg-primary/5 blur-[120px]" />
+        <div className="absolute bottom-[-20%] right-[-10%] w-[400px] h-[400px] rounded-full bg-accent/5 blur-[120px]" />
+      </div>
+
+      <div className="relative z-10 max-w-2xl mx-auto px-4 py-8 sm:py-12">
+        {/* Header */}
+        <motion.div
+          initial={{ opacity: 0, y: -20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="text-center mb-10"
+        >
+          <div className="inline-flex items-center gap-2 mb-3">
+            <Clapperboard className="w-8 h-8 text-primary" />
+            <h1 className="font-display text-3xl sm:text-4xl font-bold gradient-text">
+              Reels Studio
+            </h1>
+          </div>
+          <p className="text-sm text-muted-foreground font-body max-w-md mx-auto">
+            Превращай персонажей в мультфильмы с аудио из Instagram Reels
+          </p>
+        </motion.div>
+
+        {/* Steps */}
+        <div className="space-y-6">
+          <ReelUrlInput
+            onSubmit={handleReelSubmit}
+            isLoading={isLoadingReel}
+            isLoaded={reelLoaded}
+          />
+
+          {reelLoaded && <AudioPreview reelUrl={reelUrl} />}
+
+          <CharacterUploader characters={characters} onChange={setCharacters} />
+
+          <GeneratePanel
+            canGenerate={canGenerate}
+            onGenerate={handleGenerate}
+            isGenerating={isGenerating}
+            progress={progress}
+          />
+        </div>
+      </div>
     </div>
   );
 };
-
-const Index = PlaceholderIndex;
 
 export default Index;
