@@ -1,42 +1,95 @@
+import { useRef } from "react";
 import { motion } from "framer-motion";
-import { Music, Volume2 } from "lucide-react";
+import { Download, Loader2, AlertCircle, Play } from "lucide-react";
 
 interface AudioPreviewProps {
   reelUrl: string;
+  videoUrl?: string;
+  error?: string;
+  isLoading?: boolean;
 }
 
-const AudioPreview = ({ reelUrl }: AudioPreviewProps) => {
-  // Fake waveform bars for visual effect
-  const bars = Array.from({ length: 40 }, (_, i) => ({
-    height: 20 + Math.sin(i * 0.5) * 15 + Math.random() * 20,
-    delay: i * 0.02,
-  }));
+const AudioPreview = ({ reelUrl, videoUrl, error, isLoading }: AudioPreviewProps) => {
+  const videoRef = useRef<HTMLVideoElement>(null);
 
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      className="glass rounded-xl p-4"
-    >
-      <div className="flex items-center gap-2 mb-3">
-        <Music className="w-4 h-4 text-primary" />
-        <span className="text-xs font-display font-semibold text-foreground">Аудио дорожка</span>
-        <Volume2 className="w-3.5 h-3.5 text-muted-foreground ml-auto" />
-      </div>
-      <div className="flex items-end gap-[2px] h-12">
-        {bars.map((bar, i) => (
-          <motion.div
-            key={i}
-            initial={{ height: 4 }}
-            animate={{ height: bar.height }}
-            transition={{ duration: 0.4, delay: bar.delay, type: "spring", damping: 15 }}
-            className="flex-1 rounded-full bg-gradient-to-t from-primary/60 to-primary"
-          />
-        ))}
-      </div>
-      <p className="text-[10px] text-muted-foreground mt-2 truncate font-body">{reelUrl}</p>
-    </motion.div>
-  );
+  // ── Loading state ──────────────────────────────────────────────────────────
+  if (isLoading) {
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="glass rounded-xl p-6 flex flex-col items-center gap-3"
+      >
+        <Loader2 className="w-8 h-8 text-primary animate-spin" />
+        <p className="text-sm text-muted-foreground font-body">Загружаем видео…</p>
+      </motion.div>
+    );
+  }
+
+  // ── Error state ────────────────────────────────────────────────────────────
+  if (error) {
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="glass rounded-xl p-4 flex items-start gap-3 border border-destructive/40"
+      >
+        <AlertCircle className="w-5 h-5 text-destructive shrink-0 mt-0.5" />
+        <div>
+          <p className="text-sm font-semibold text-foreground font-display">Не удалось загрузить</p>
+          <p className="text-xs text-muted-foreground font-body mt-0.5">{error}</p>
+          <p className="text-xs text-muted-foreground font-body mt-1 break-all opacity-60">{reelUrl}</p>
+        </div>
+      </motion.div>
+    );
+  }
+
+  // ── Video ready ────────────────────────────────────────────────────────────
+  if (videoUrl) {
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="glass rounded-xl overflow-hidden"
+      >
+        {/* Video player */}
+        <div className="relative bg-black rounded-t-xl overflow-hidden" style={{ aspectRatio: "9/16", maxHeight: 480 }}>
+          <video
+            ref={videoRef}
+            src={videoUrl}
+            controls
+            playsInline
+            className="w-full h-full object-contain"
+            poster=""
+          >
+            Ваш браузер не поддерживает видео.
+          </video>
+        </div>
+
+        {/* Actions bar */}
+        <div className="flex items-center justify-between px-4 py-3 gap-3">
+          <div className="flex items-center gap-2 min-w-0">
+            <Play className="w-4 h-4 text-primary shrink-0" />
+            <p className="text-xs text-muted-foreground font-body truncate">{reelUrl}</p>
+          </div>
+
+          <a
+            href={videoUrl}
+            download
+            target="_blank"
+            rel="noreferrer"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-display font-semibold shrink-0 hover:opacity-90 transition-opacity"
+          >
+            <Download className="w-3.5 h-3.5" />
+            Скачать
+          </a>
+        </div>
+      </motion.div>
+    );
+  }
+
+  return null;
 };
 
 export default AudioPreview;
+

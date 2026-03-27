@@ -5,24 +5,23 @@ import ReelUrlInput from "@/components/ReelUrlInput";
 import CharacterUploader, { type Character } from "@/components/CharacterUploader";
 import AudioPreview from "@/components/AudioPreview";
 import GeneratePanel from "@/components/GeneratePanel";
+import { useReelFetcher } from "@/hooks/use-reel-fetcher";
 
 const Index = () => {
   const [reelUrl, setReelUrl] = useState("");
-  const [isLoadingReel, setIsLoadingReel] = useState(false);
-  const [reelLoaded, setReelLoaded] = useState(false);
   const [characters, setCharacters] = useState<Character[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [progress, setProgress] = useState(0);
 
+  const { fetchReel, reset, isLoading: isLoadingReel, data: reelData, error: reelError } = useReelFetcher();
+
+  const reelLoaded = !!reelData;
+
   const handleReelSubmit = useCallback((url: string) => {
     setReelUrl(url);
-    setIsLoadingReel(true);
-    // Simulate loading for now
-    setTimeout(() => {
-      setIsLoadingReel(false);
-      setReelLoaded(true);
-    }, 1500);
-  }, []);
+    reset();
+    fetchReel(url);
+  }, [fetchReel, reset]);
 
   const handleGenerate = useCallback(() => {
     setIsGenerating(true);
@@ -76,7 +75,14 @@ const Index = () => {
             isLoaded={reelLoaded}
           />
 
-          {reelLoaded && <AudioPreview reelUrl={reelUrl} />}
+          {(reelLoaded || reelError || isLoadingReel) && (
+            <AudioPreview
+              reelUrl={reelUrl}
+              videoUrl={reelData?.videoUrl}
+              error={reelError ?? undefined}
+              isLoading={isLoadingReel}
+            />
+          )}
 
           <CharacterUploader characters={characters} onChange={setCharacters} />
 
