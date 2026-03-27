@@ -6,7 +6,69 @@ export interface ReelData {
   filename?: string;
 }
 
-const COBALT_API = "https://api.cobalt.tools/";
+// Public cobalt instance with CORS enabled (access-control-allow-origin: *)
+const COBALT_API = "https://cobalt-backend.canine.tools/";
+const TURNSTILE_SITEKEY = "0x4AAAAAABBCV3tPrCXT9h2H";
+
+declare const turnstile: {
+  render: (container: string | HTMLElement, options: Record<string, unknown>) => string;
+  remove: (widgetId: string) => void;
+  getResponse: (widgetId: string) => string | undefined;
+};
+
+/** Solve Cloudflare Turnstile invisibly and return the token */
+function solveTurnstile(): Promise<string> {
+  return new Promise((resolve, reject) => {
+    // Create a hidden container
+    const container = document.createElement("div");
+    container.style.cssText = "position:fixed;bottom:0;right:0;width:0;height:0;overflow:hidden;";
+    document.body.appendChild(container);
+
+    const timeout = setTimeout(() => {
+      try { turnstile.remove(widgetId); } catch {}
+      container.remove();
+      reject(new Error("Turnstile timeout — попробуй ещё раз"));
+    }, 30000);
+
+    let widgetId: string;
+    try {
+      widgetId = turnstile.render(container, {
+        sitekey: TURNSTILE_SITEKEY,
+        theme: "dark",
+        size: "invisible",
+        callback: (token: string) => {
+          clearTimeout(timeout);
+          try { turnstile.remove(widgetId); } catch {}
+          container.remove();
+          resolve(token);
+        },
+        "error-callback": () => {
+          clearTimeout(timeout);
+          try { turnstile.remove(widgetId); } catch {}
+          container.remove();
+          reject(new Error("Ошибка проверки Cloudflare — попробуй ещё раз"));
+        },
+      });
+    } catch (e) {
+      clearTimeout(timeout);
+      container.remove();
+      reject(e);
+    }
+  });
+}
+
+/** Exchange Turnstile token for JWT bearer */
+async function getJwt(): Promise<string> {
+  const turnstileToken = await solveTurnstile();
+  const res = await fetch(`${COBALT_API}session`, {
+    method: "POST",
+    headers: { "cf-turnstile-response": turnstileToken },
+  });
+  if (!res.ok) throw new Error(`Session HTTP ${res.status}`);
+  const json = await res.json();
+  if (!json.token) throw new Error("JWT не получен");
+  return json.token as string;
+}
 
 function translateError(code: string): string {
   const map: Record<string, string> = {
@@ -32,11 +94,16 @@ export function useReelFetcher() {
     setData(null);
 
     try {
+      // Step 1: get JWT via Turnstile
+      const jwt = await getJwt();
+
+      // Step 2: call cobalt API
       const response = await fetch(COBALT_API, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Accept: "application/json",
+          Authorization: `Bearer ${jwt}`,
         },
         body: JSON.stringify({ url }),
       });
