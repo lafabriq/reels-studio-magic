@@ -1,0 +1,39 @@
+{
+  "name": "memory-bank",
+  "description": "MCP Memory Bank for project context and knowledge storage",
+  "type": "memory-bank",
+  "version": "1.0.0",
+  "features": {
+    "persistent_memory": true,
+    "session_memory": true,
+    "repository_memory": true,
+    "knowledge_base": true
+  },
+  "contexts": [
+    {
+      "id": "context7",
+      "name": "Project Setup Context 7",
+      "description": "Comprehensive project setup and scaffolding context",
+      "enabled": true,
+      "capabilities": [
+        "project-initialization",
+        "framework-setup",
+        "dependency-management",
+        "configuration-generation",
+        "boilerplate-code"
+      ]
+    }
+  ],
+  "storage": {
+    "location": "/workspaces/reels-studio-magic/.mcp-memory",
+    "encryption": false,
+    "auto_save": true
+  },
+  "project": {
+    "name": "reels-studio-magic",
+    "repository": "https://github.com/lafabriq/reels-studio-magic",
+    "framework": "React 18 + TypeScript",
+    "build_tool": "Vite",
+    "deployment": "GitHub Pages"
+  }
+}
