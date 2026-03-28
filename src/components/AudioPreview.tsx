@@ -1,16 +1,16 @@
-import { useRef } from "react";
+import { useState } from "react";
 import { motion } from "framer-motion";
-import { Download, Loader2, AlertCircle, Play } from "lucide-react";
+import { ExternalLink, AlertCircle, Loader2 } from "lucide-react";
 
 interface AudioPreviewProps {
   reelUrl: string;
-  videoUrl?: string;
+  embedUrl?: string;
   error?: string;
   isLoading?: boolean;
 }
 
-const AudioPreview = ({ reelUrl, videoUrl, error, isLoading }: AudioPreviewProps) => {
-  const videoRef = useRef<HTMLVideoElement>(null);
+const AudioPreview = ({ reelUrl, embedUrl, error, isLoading }: AudioPreviewProps) => {
+  const [iframeLoading, setIframeLoading] = useState(true);
 
   // ── Loading state ──────────────────────────────────────────────────────────
   if (isLoading) {
@@ -38,50 +38,51 @@ const AudioPreview = ({ reelUrl, videoUrl, error, isLoading }: AudioPreviewProps
         <div>
           <p className="text-sm font-semibold text-foreground font-display">Не удалось загрузить</p>
           <p className="text-xs text-muted-foreground font-body mt-0.5">{error}</p>
-          <p className="text-xs text-muted-foreground font-body mt-1 break-all opacity-60">{reelUrl}</p>
         </div>
       </motion.div>
     );
   }
 
-  // ── Video ready ────────────────────────────────────────────────────────────
-  if (videoUrl) {
+  // ── Embed ready ────────────────────────────────────────────────────────────
+  if (embedUrl) {
     return (
       <motion.div
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
         className="glass rounded-xl overflow-hidden"
       >
-        {/* Video player */}
-        <div className="relative bg-black rounded-t-xl overflow-hidden" style={{ aspectRatio: "9/16", maxHeight: 480 }}>
-          <video
-            ref={videoRef}
-            src={videoUrl}
-            controls
-            playsInline
-            className="w-full h-full object-contain"
-            poster=""
-          >
-            Ваш браузер не поддерживает видео.
-          </video>
+        {/* Instagram embed iframe */}
+        <div className="relative bg-black" style={{ minHeight: 560 }}>
+          {iframeLoading && (
+            <div className="absolute inset-0 flex items-center justify-center z-10">
+              <Loader2 className="w-8 h-8 text-primary animate-spin" />
+            </div>
+          )}
+          <iframe
+            src={embedUrl}
+            title="Instagram Reel"
+            width="100%"
+            height="560"
+            frameBorder="0"
+            scrolling="no"
+            allowTransparency
+            allow="autoplay; encrypted-media; picture-in-picture"
+            className="w-full block"
+            onLoad={() => setIframeLoading(false)}
+          />
         </div>
 
         {/* Actions bar */}
         <div className="flex items-center justify-between px-4 py-3 gap-3">
-          <div className="flex items-center gap-2 min-w-0">
-            <Play className="w-4 h-4 text-primary shrink-0" />
-            <p className="text-xs text-muted-foreground font-body truncate">{reelUrl}</p>
-          </div>
-
+          <p className="text-xs text-muted-foreground font-body truncate min-w-0">{reelUrl}</p>
           <a
-            href={videoUrl}
-            download
+            href={reelUrl}
             target="_blank"
-            rel="noreferrer"
+            rel="noreferrer noopener"
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-display font-semibold shrink-0 hover:opacity-90 transition-opacity"
           >
-            <Download className="w-3.5 h-3.5" />
-            Скачать
+            <ExternalLink className="w-3.5 h-3.5" />
+            Открыть
           </a>
         </div>
       </motion.div>

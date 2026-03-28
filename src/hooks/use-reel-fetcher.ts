@@ -1,70 +1,54 @@
 import { useState, useCallback } from "react";
 
 export interface ReelData {
-  videoUrl: string;
-  filename?: string;
+  embedUrl: string;
+  shortcode: string;
+  originalUrl: string;
 }
 
 /**
- * URL Cloudflare Worker-прокси.
+ * Извлекает shortcode из любой ссылки на Instagram Reel или пост.
  *
- * Где взять:
- * 1. cloudflare.com → Workers & Pages → создай Worker из /worker/index.js
- * 2. Settings → Variables → Secret: IG_SESSION_ID = <sessionid из куки instagram.com>
- * 3. Скопируй URL вида https://xxx.workers.dev
- * 4. Запусти билд с VITE_WORKER_URL=https://xxx.workers.dev npm run build
- *    или добавь в GitHub Secrets: VITE_WORKER_URL
+ * Поддерживает форматы:
+ *   https://www.instagram.com/reel/SHORTCODE/
+ *   https://www.instagram.com/p/SHORTCODE/
+ *   https://instagram.com/reel/SHORTCODE
  */
-const WORKER_URL = import.meta.env.VITE_WORKER_URL as string | undefined;
+function extractShortcode(url: string): string | null {
+  const match = url.match(/instagram\.com\/(?:reel|p)\/([A-Za-z0-9_-]+)/);
+  return match ? match[1] : null;
+}
 
 /**
- * Хук для загрузки прямой ссылки на видео из Instagram Reels.
+ * Хук для встраивания видео из Instagram Reels через официальный embed.
  *
- * Схема: POST WORKER_URL → { videoUrl } → <video src={videoUrl}>
+ * Схема: URL → shortcode → https://www.instagram.com/reel/{shortcode}/embed/
  *
- * Требует деплоя Cloudflare Worker (/worker/index.js).
- * Worker хранит Instagram sessionid как env secret и делает
- * server-side запрос к Instagram Mobile API.
+ * Не требует бэкенда, API ключей или аутентификации.
+ * Instagram официально предоставляет embed-систему для публичных постов.
  */
 export function useReelFetcher() {
-  const [isLoading, setIsLoading] = useState(false);
   const [data, setData] = useState<ReelData | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchReel = useCallback(async (url: string) => {
-    setIsLoading(true);
+  const fetchReel = useCallback((url: string) => {
     setError(null);
     setData(null);
 
-    try {
-      if (!WORKER_URL) {
-        throw new Error(
-          "Worker не настроен. Задеплой /worker/index.js на Cloudflare и добавь VITE_WORKER_URL в переменные окружения."
-        );
-      }
+    const shortcode = extractShortcode(url.trim());
 
-      const response = await fetch(WORKER_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url }),
-      });
-
-      const json = await response.json() as { videoUrl?: string; error?: string };
-
-      if (!response.ok || json.error) {
-        throw new Error(json.error ?? `HTTP ${response.status}`);
-      }
-
-      if (!json.videoUrl) {
-        throw new Error("Worker не вернул videoUrl");
-      }
-
-      setData({ videoUrl: json.videoUrl });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Неизвестная ошибка");
-    } finally {
-      setIsLoading(false);
+    if (!shortcode) {
+      setError(
+        "Неверная ссылка. Вставь ссылку вида instagram.com/reel/XXXXX/ или instagram.com/p/XXXXX/"
+      );
+      return;
     }
+
+    setData({
+      embedUrl: `https://www.instagram.com/reel/${shortcode}/embed/`,
+      shortcode,
+      originalUrl: url.trim(),
+    });
   }, []);
 
   const reset = useCallback(() => {
@@ -72,5 +56,5 @@ export function useReelFetcher() {
     setError(null);
   }, []);
 
-  return { fetchReel, reset, isLoading, data, error };
+  return { fetchReel, reset, isLoading: false, data, error };
 }

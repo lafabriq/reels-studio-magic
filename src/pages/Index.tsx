@@ -78,7 +78,7 @@ const Index = () => {
           {(reelLoaded || reelError || isLoadingReel) && (
             <AudioPreview
               reelUrl={reelUrl}
-              videoUrl={reelData?.videoUrl}
+              embedUrl={reelData?.embedUrl}
               error={reelError ?? undefined}
               isLoading={isLoadingReel}
             />
