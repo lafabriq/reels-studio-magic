@@ -2,87 +2,30 @@ import { useState, useCallback } from "react";
 
 export interface ReelData {
   videoUrl: string;
-  audioUrl?: string;
   filename?: string;
 }
 
-// Public cobalt instance with CORS enabled (access-control-allow-origin: *)
-const COBALT_API = "https://cobalt-backend.canine.tools/";
-const TURNSTILE_SITEKEY = "0x4AAAAAABBCV3tPrCXT9h2H";
+/**
+ * URL Cloudflare Worker-прокси.
+ *
+ * Где взять:
+ * 1. cloudflare.com → Workers & Pages → создай Worker из /worker/index.js
+ * 2. Settings → Variables → Secret: IG_SESSION_ID = <sessionid из куки instagram.com>
+ * 3. Скопируй URL вида https://xxx.workers.dev
+ * 4. Запусти билд с VITE_WORKER_URL=https://xxx.workers.dev npm run build
+ *    или добавь в GitHub Secrets: VITE_WORKER_URL
+ */
+const WORKER_URL = import.meta.env.VITE_WORKER_URL as string | undefined;
 
-declare const turnstile: {
-  render: (container: string | HTMLElement, options: Record<string, unknown>) => string;
-  remove: (widgetId: string) => void;
-  getResponse: (widgetId: string) => string | undefined;
-};
-
-/** Solve Cloudflare Turnstile invisibly and return the token */
-function solveTurnstile(): Promise<string> {
-  return new Promise((resolve, reject) => {
-    // Create a hidden container
-    const container = document.createElement("div");
-    container.style.cssText = "position:fixed;bottom:0;right:0;width:0;height:0;overflow:hidden;";
-    document.body.appendChild(container);
-
-    const timeout = setTimeout(() => {
-      try { turnstile.remove(widgetId); } catch {}
-      container.remove();
-      reject(new Error("Turnstile timeout — попробуй ещё раз"));
-    }, 30000);
-
-    let widgetId: string;
-    try {
-      widgetId = turnstile.render(container, {
-        sitekey: TURNSTILE_SITEKEY,
-        theme: "dark",
-        size: "invisible",
-        callback: (token: string) => {
-          clearTimeout(timeout);
-          try { turnstile.remove(widgetId); } catch {}
-          container.remove();
-          resolve(token);
-        },
-        "error-callback": () => {
-          clearTimeout(timeout);
-          try { turnstile.remove(widgetId); } catch {}
-          container.remove();
-          reject(new Error("Ошибка проверки Cloudflare — попробуй ещё раз"));
-        },
-      });
-    } catch (e) {
-      clearTimeout(timeout);
-      container.remove();
-      reject(e);
-    }
-  });
-}
-
-/** Exchange Turnstile token for JWT bearer */
-async function getJwt(): Promise<string> {
-  const turnstileToken = await solveTurnstile();
-  const res = await fetch(`${COBALT_API}session`, {
-    method: "POST",
-    headers: { "cf-turnstile-response": turnstileToken },
-  });
-  if (!res.ok) throw new Error(`Session HTTP ${res.status}`);
-  const json = await res.json();
-  if (!json.token) throw new Error("JWT не получен");
-  return json.token as string;
-}
-
-function translateError(code: string): string {
-  const map: Record<string, string> = {
-    "error.api.unreachable_service": "Instagram временно недоступен — попробуй позже",
-    "error.api.fetch.short_link": "Не удалось расшифровать короткую ссылку",
-    "error.api.link.unsupported": "Ссылка не поддерживается",
-    "error.api.link.invalid": "Неверная ссылка на Reel",
-    "error.api.content.unavailable": "Видео недоступно (приватный аккаунт?)",
-    "error.api.content.too_long": "Видео слишком длинное",
-    "error.api.rate_exceeded": "Слишком много запросов — подожди немного",
-  };
-  return map[code] ?? `Ошибка сервиса: ${code}`;
-}
-
+/**
+ * Хук для загрузки прямой ссылки на видео из Instagram Reels.
+ *
+ * Схема: POST WORKER_URL → { videoUrl } → <video src={videoUrl}>
+ *
+ * Требует деплоя Cloudflare Worker (/worker/index.js).
+ * Worker хранит Instagram sessionid как env secret и делает
+ * server-side запрос к Instagram Mobile API.
+ */
 export function useReelFetcher() {
   const [isLoading, setIsLoading] = useState(false);
   const [data, setData] = useState<ReelData | null>(null);
@@ -94,53 +37,29 @@ export function useReelFetcher() {
     setData(null);
 
     try {
-      // Step 1: get JWT via Turnstile
-      const jwt = await getJwt();
+      if (!WORKER_URL) {
+        throw new Error(
+          "Worker не настроен. Задеплой /worker/index.js на Cloudflare и добавь VITE_WORKER_URL в переменные окружения."
+        );
+      }
 
-      // Step 2: call cobalt API
-      const response = await fetch(COBALT_API, {
+      const response = await fetch(WORKER_URL, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json",
-          Authorization: `Bearer ${jwt}`,
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url }),
       });
 
-      if (!response.ok) {
-        throw new Error(`Сервер вернул HTTP ${response.status}`);
+      const json = await response.json() as { videoUrl?: string; error?: string };
+
+      if (!response.ok || json.error) {
+        throw new Error(json.error ?? `HTTP ${response.status}`);
       }
 
-      const json = await response.json();
-
-      if (json.status === "error") {
-        throw new Error(translateError(json.error?.code ?? "unknown"));
+      if (!json.videoUrl) {
+        throw new Error("Worker не вернул videoUrl");
       }
 
-      if (json.status === "tunnel" || json.status === "redirect") {
-        setData({ videoUrl: json.url, filename: json.filename });
-        return;
-      }
-
-      if (json.status === "picker") {
-        // picker — несколько вариантов (например, слайды), берём первый видео
-        const videoItem = (json.picker as Array<{ type: string; url: string }>)?.find(
-          (item) => item.type === "video"
-        ) ?? json.picker?.[0];
-
-        if (videoItem) {
-          setData({
-            videoUrl: videoItem.url,
-            audioUrl: json.audio as string | undefined,
-            filename: json.audioFilename as string | undefined,
-          });
-          return;
-        }
-        throw new Error("Видео не найдено в ответе");
-      }
-
-      throw new Error("Неизвестный формат ответа от сервиса");
+      setData({ videoUrl: json.videoUrl });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Неизвестная ошибка");
     } finally {
