@@ -5,6 +5,7 @@ import ReelUrlInput from "@/components/ReelUrlInput";
 import CharacterUploader, { type Character } from "@/components/CharacterUploader";
 import AudioPreview from "@/components/AudioPreview";
 import GeneratePanel from "@/components/GeneratePanel";
+import InstagramLogin from "@/components/InstagramLogin";
 import { useReelFetcher } from "@/hooks/use-reel-fetcher";
 
 const Index = () => {
@@ -14,6 +15,7 @@ const Index = () => {
   const [progress, setProgress] = useState(0);
 
   const { fetchReel, reset, isLoading: isLoadingReel, data: reelData, error: reelError } = useReelFetcher();
+  const [sessionReady, setSessionReady] = useState(() => !!localStorage.getItem("ig_sessionid"));
 
   const reelLoaded = !!reelData;
 
@@ -69,6 +71,8 @@ const Index = () => {
 
         {/* Steps */}
         <div className="space-y-6">
+          <InstagramLogin onSessionReady={(sid) => { setSessionReady(!!sid); }} />
+
           <ReelUrlInput
             onSubmit={handleReelSubmit}
             isLoading={isLoadingReel}
@@ -78,7 +82,7 @@ const Index = () => {
           {(reelLoaded || reelError || isLoadingReel) && (
             <AudioPreview
               reelUrl={reelUrl}
-              embedUrl={reelData?.embedUrl}
+              videoUrl={reelData?.videoUrl}
               error={reelError ?? undefined}
               isLoading={isLoadingReel}
             />

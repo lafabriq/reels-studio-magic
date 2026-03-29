@@ -1,17 +1,14 @@
-import { useState } from "react";
 import { motion } from "framer-motion";
-import { ExternalLink, AlertCircle, Loader2 } from "lucide-react";
+import { Download, AlertCircle, Loader2, Play } from "lucide-react";
 
 interface AudioPreviewProps {
   reelUrl: string;
-  embedUrl?: string;
+  videoUrl?: string;
   error?: string;
   isLoading?: boolean;
 }
 
-const AudioPreview = ({ reelUrl, embedUrl, error, isLoading }: AudioPreviewProps) => {
-  const [iframeLoading, setIframeLoading] = useState(true);
-
+const AudioPreview = ({ reelUrl, videoUrl, error, isLoading }: AudioPreviewProps) => {
   // ── Loading state ──────────────────────────────────────────────────────────
   if (isLoading) {
     return (
@@ -43,46 +40,36 @@ const AudioPreview = ({ reelUrl, embedUrl, error, isLoading }: AudioPreviewProps
     );
   }
 
-  // ── Embed ready ────────────────────────────────────────────────────────────
-  if (embedUrl) {
+  // ── Video ready ────────────────────────────────────────────────────────────
+  if (videoUrl) {
     return (
       <motion.div
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
         className="glass rounded-xl overflow-hidden"
       >
-        {/* Instagram embed iframe */}
-        <div className="relative bg-black" style={{ minHeight: 560 }}>
-          {iframeLoading && (
-            <div className="absolute inset-0 flex items-center justify-center z-10">
-              <Loader2 className="w-8 h-8 text-primary animate-spin" />
-            </div>
-          )}
-          <iframe
-            src={embedUrl}
-            title="Instagram Reel"
-            width="100%"
-            height="560"
-            frameBorder="0"
-            scrolling="no"
-            allowTransparency
-            allow="autoplay; encrypted-media; picture-in-picture"
-            className="w-full block"
-            onLoad={() => setIframeLoading(false)}
+        <div className="relative bg-black rounded-t-xl overflow-hidden" style={{ aspectRatio: "9/16", maxHeight: 480 }}>
+          <video
+            src={videoUrl}
+            controls
+            playsInline
+            className="w-full h-full object-contain"
           />
         </div>
-
-        {/* Actions bar */}
         <div className="flex items-center justify-between px-4 py-3 gap-3">
-          <p className="text-xs text-muted-foreground font-body truncate min-w-0">{reelUrl}</p>
+          <div className="flex items-center gap-2 min-w-0">
+            <Play className="w-4 h-4 text-primary shrink-0" />
+            <p className="text-xs text-muted-foreground font-body truncate">{reelUrl}</p>
+          </div>
           <a
-            href={reelUrl}
+            href={videoUrl}
+            download
             target="_blank"
-            rel="noreferrer noopener"
+            rel="noreferrer"
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-display font-semibold shrink-0 hover:opacity-90 transition-opacity"
           >
-            <ExternalLink className="w-3.5 h-3.5" />
-            Открыть
+            <Download className="w-3.5 h-3.5" />
+            Скачать
           </a>
         </div>
       </motion.div>

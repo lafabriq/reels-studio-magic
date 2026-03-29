@@ -1,54 +1,57 @@
 import { useState, useCallback } from "react";
 
 export interface ReelData {
-  embedUrl: string;
-  shortcode: string;
-  originalUrl: string;
+  videoUrl: string;
 }
 
-/**
- * Извлекает shortcode из любой ссылки на Instagram Reel или пост.
- *
- * Поддерживает форматы:
- *   https://www.instagram.com/reel/SHORTCODE/
- *   https://www.instagram.com/p/SHORTCODE/
- *   https://instagram.com/reel/SHORTCODE
- */
-function extractShortcode(url: string): string | null {
-  const match = url.match(/instagram\.com\/(?:reel|p)\/([A-Za-z0-9_-]+)/);
-  return match ? match[1] : null;
-}
+const API_BASE = import.meta.env.VITE_API_URL ?? "";
 
 /**
- * Хук для встраивания видео из Instagram Reels через официальный embed.
+ * Хук для получения прямой ссылки на видео из Instagram Reels.
  *
- * Схема: URL → shortcode → https://www.instagram.com/reel/{shortcode}/embed/
+ * Схема: sessionid из localStorage → POST /api/reel → { videoUrl }
  *
- * Не требует бэкенда, API ключей или аутентификации.
- * Instagram официально предоставляет embed-систему для публичных постов.
+ * sessionid сохраняется компонентом InstagramLogin после логина.
  */
 export function useReelFetcher() {
+  const [isLoading, setIsLoading] = useState(false);
   const [data, setData] = useState<ReelData | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchReel = useCallback((url: string) => {
+  const fetchReel = useCallback(async (url: string) => {
+    setIsLoading(true);
     setError(null);
     setData(null);
 
-    const shortcode = extractShortcode(url.trim());
-
-    if (!shortcode) {
-      setError(
-        "Неверная ссылка. Вставь ссылку вида instagram.com/reel/XXXXX/ или instagram.com/p/XXXXX/"
-      );
+    const sessionid = localStorage.getItem("ig_sessionid");
+    if (!sessionid) {
+      setError("Сначала войди в Instagram — форма выше");
+      setIsLoading(false);
       return;
     }
 
-    setData({
-      embedUrl: `https://www.instagram.com/reel/${shortcode}/embed/`,
-      shortcode,
-      originalUrl: url.trim(),
-    });
+    try {
+      const res = await fetch(`${API_BASE}/api/reel`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url, sessionid }),
+      });
+
+      const json = await res.json() as { videoUrl?: string; error?: string };
+
+      if (!res.ok || !json.videoUrl) {
+        if (res.status === 401) {
+          localStorage.removeItem("ig_sessionid");
+        }
+        throw new Error(json.error ?? `Ошибка ${res.status}`);
+      }
+
+      setData({ videoUrl: json.videoUrl });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Неизвестная ошибка");
+    } finally {
+      setIsLoading(false);
+    }
   }, []);
 
   const reset = useCallback(() => {
@@ -56,5 +59,5 @@ export function useReelFetcher() {
     setError(null);
   }, []);
 
-  return { fetchReel, reset, isLoading: false, data, error };
+  return { fetchReel, reset, isLoading, data, error };
 }
