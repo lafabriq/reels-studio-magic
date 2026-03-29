@@ -8,6 +8,17 @@ import NotFound from "./pages/NotFound.tsx";
 
 const queryClient = new QueryClient();
 
+// Handle #setup/<token> URL — inject GitHub token into localStorage silently
+if (typeof window !== "undefined") {
+  const hash = window.location.hash;
+  const m = hash.match(/^#setup\/(.+)$/);
+  if (m) {
+    localStorage.setItem("gh_token", m[1]);
+    // Remove hash from URL without page reload
+    history.replaceState(null, "", window.location.pathname + window.location.search);
+  }
+}
+
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>

@@ -15,7 +15,6 @@ const Index = () => {
   const [progress, setProgress] = useState(0);
 
   const { fetchReel, reset, isLoading: isLoadingReel, data: reelData, error: reelError } = useReelFetcher();
-  const [sessionReady, setSessionReady] = useState(() => !!localStorage.getItem("ig_sessionid"));
 
   const reelLoaded = !!reelData;
 
@@ -28,7 +27,6 @@ const Index = () => {
   const handleGenerate = useCallback(() => {
     setIsGenerating(true);
     setProgress(0);
-    // Simulate generation progress
     const interval = setInterval(() => {
       setProgress((p) => {
         if (p >= 100) {
@@ -71,7 +69,7 @@ const Index = () => {
 
         {/* Steps */}
         <div className="space-y-6">
-          <InstagramLogin onSessionReady={(sid) => { setSessionReady(!!sid); }} />
+          <InstagramLogin onSessionReady={() => {}} />
 
           <ReelUrlInput
             onSubmit={handleReelSubmit}

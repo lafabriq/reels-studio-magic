@@ -1,0 +1,134 @@
+name: Instagram Confirm Checkpoint
+
+on:
+  repository_dispatch:
+    types: [ig_confirm]
+
+permissions:
+  contents: write
+  secrets: write
+
+jobs:
+  confirm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+
+    steps:
+      - name: Complete Instagram checkpoint challenge
+        env:
+          CHECKPOINT_URL: ${{ github.event.client_payload.checkpoint_url }}
+          SECURITY_CODE:  ${{ github.event.client_payload.security_code }}
+          REQUEST_ID:     ${{ github.event.client_payload.request_id }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 << 'PYEOF'
+          import os, json, re, urllib.request, urllib.parse, urllib.error, base64
+
+          checkpoint_url = os.environ.get("CHECKPOINT_URL", "")
+          security_code  = os.environ.get("SECURITY_CODE", "").strip()
+          request_id     = os.environ.get("REQUEST_ID", "")
+          gh_token       = os.environ.get("GH_TOKEN", "")
+          repo           = os.environ.get("GITHUB_REPOSITORY", "")
+
+          def write_result(obj):
+              content = base64.b64encode(json.dumps(obj).encode()).decode()
+              path = f"results/ig-confirm-{request_id}.json"
+              check = urllib.request.Request(
+                  f"https://api.github.com/repos/{repo}/contents/{path}",
+                  headers={"Authorization": f"Bearer {gh_token}", "Accept": "application/vnd.github.v3+json"}
+              )
+              sha = None
+              try:
+                  with urllib.request.urlopen(check) as r:
+                      sha = json.loads(r.read()).get("sha")
+              except:
+                  pass
+              payload = {"message": f"result:{request_id}", "content": content}
+              if sha:
+                  payload["sha"] = sha
+              req = urllib.request.Request(
+                  f"https://api.github.com/repos/{repo}/contents/{path}",
+                  data=json.dumps(payload).encode(),
+                  headers={
+                      "Authorization": f"Bearer {gh_token}",
+                      "Content-Type": "application/json",
+                      "Accept": "application/vnd.github.v3+json",
+                  },
+                  method="PUT",
+              )
+              with urllib.request.urlopen(req) as r:
+                  print(f"Result written: {r.status}")
+
+          def set_secret(name, value):
+              import subprocess, sys
+              subprocess.check_call([sys.executable, "-m", "pip", "install", "PyNaCl", "-q"])
+              from nacl import public as nacl_public
+              pk_req = urllib.request.Request(
+                  f"https://api.github.com/repos/{repo}/actions/secrets/public-key",
+                  headers={"Authorization": f"Bearer {gh_token}", "Accept": "application/vnd.github.v3+json"}
+              )
+              with urllib.request.urlopen(pk_req) as r:
+                  pk_data = json.loads(r.read())
+              pk_bytes = base64.b64decode(pk_data["key"])
+              box = nacl_public.SealedBox(nacl_public.PublicKey(pk_bytes))
+              encrypted = base64.b64encode(box.encrypt(value.encode())).decode()
+              sec_req = urllib.request.Request(
+                  f"https://api.github.com/repos/{repo}/actions/secrets/{name}",
+                  data=json.dumps({"encrypted_value": encrypted, "key_id": pk_data["key_id"]}).encode(),
+                  headers={
+                      "Authorization": f"Bearer {gh_token}",
+                      "Content-Type": "application/json",
+                      "Accept": "application/vnd.github.v3+json",
+                  },
+                  method="PUT",
+              )
+              with urllib.request.urlopen(sec_req) as r:
+                  print(f"Secret {name} set: status {r.status}")
+
+          # --- Submit the security code to the checkpoint URL ---
+          challenge_data = urllib.parse.urlencode({
+              "security_code": security_code,
+          }).encode()
+          headers = {
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+              "Accept": "*/*",
+              "Content-Type": "application/x-www-form-urlencoded",
+              "X-Instagram-AJAX": "1",
+              "X-CSRFToken": "initcsrf",
+              "X-Requested-With": "XMLHttpRequest",
+              "Referer": checkpoint_url,
+              "Cookie": "csrftoken=initcsrf",
+          }
+          req = urllib.request.Request(
+              checkpoint_url, data=challenge_data, headers=headers, method="POST"
+          )
+          try:
+              with urllib.request.urlopen(req, timeout=20) as r:
+                  cookies = r.headers.get("Set-Cookie", "")
+                  body = r.read().decode(errors="ignore")
+              status_code = 200
+          except urllib.error.HTTPError as e:
+              cookies = e.headers.get("Set-Cookie", "")
+              body = e.read().decode(errors="ignore")
+              status_code = e.code
+
+          print(f"Checkpoint HTTP {status_code}")
+          sid_match = re.search(r"sessionid=([^;,\s]+)", cookies)
+
+          if sid_match:
+              sessionid = sid_match.group(1)
+              print("Checkpoint SUCCESS — storing sessionid")
+              set_secret("IG_SESSION_ID", sessionid)
+              write_result({"req": request_id, "status": "ok"})
+          else:
+              try:
+                  data = json.loads(body)
+              except:
+                  data = {}
+              print(f"Checkpoint body: {body[:300]}")
+              write_result({
+                  "req": request_id,
+                  "status": "error",
+                  "error": data.get("message", f"Код не подошёл или истёк (HTTP {status_code})"),
+              })
+          PYEOF

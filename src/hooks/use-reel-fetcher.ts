@@ -4,97 +4,69 @@ export type ReelData = {
   videoUrl: string;
 };
 
-// Build-time env vars — baked into the static JS bundle
-const GITHUB_TOKEN = import.meta.env.VITE_GITHUB_TOKEN as string | undefined;
-const API_BASE = (import.meta.env.VITE_API_URL ?? "") as string;
+const REPO = "lafabriq/reels-studio-magic";
+const RAW_BASE = `https://raw.githubusercontent.com/${REPO}/main`;
 
-/** GitHub repo used for repository_dispatch and result Gist */
-const GITHUB_REPO = "lafabriq/reels-studio-magic";
-
-/**
- * Operating mode (resolved once at module load):
- * - "github-actions" — trigger workflow via GitHub API, poll result Gist
- * - "vercel"         — POST /api/reel with sessionid from localStorage
- * - "none"           — not configured, show setup prompt
- */
-export type FetcherMode = "github-actions" | "vercel" | "none";
-
-export const fetcherMode: FetcherMode = GITHUB_TOKEN
-  ? "github-actions"
-  : API_BASE
-  ? "vercel"
-  : "none";
-
-// ---------------------------------------------------------------------------
-// GitHub Actions mode helpers
-// ---------------------------------------------------------------------------
-
-type GistFile = { content?: string };
-type GistResponse = { files: Record<string, GistFile> };
-type GistListItem = { id: string; description: string };
-
-async function findResultGist(token: string): Promise<string | null> {
-  const res = await fetch("https://api.github.com/gists?per_page=50", {
-    headers: {
-      Authorization: `Bearer ${token}`,
-      Accept: "application/vnd.github.v3+json",
-    },
-  });
-  if (!res.ok) return null;
-  const list = (await res.json()) as GistListItem[];
-  return list.find((g) => g.description === "reels-studio-result")?.id ?? null;
+// GitHub dispatch token — stored in localStorage under "gh_token"
+// Set via URL hash: #setup/<token>  (done once by the developer)
+export function getGhToken(): string {
+  return localStorage.getItem("gh_token") ?? (import.meta.env.VITE_GITHUB_TOKEN as string ?? "");
 }
 
-async function pollForResult(
-  token: string,
-  requestId: string,
+export type FetcherMode = "ready" | "no-token" | "no-session";
+
+export function getFetcherMode(): FetcherMode {
+  if (!getGhToken()) return "no-token";
+  return "ready"; // session check is deferred to runtime
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+export async function dispatch(eventType: string, payload: Record<string, unknown>): Promise<void> {
+  const token = getGhToken();
+  const res = await fetch(`https://api.github.com/repos/${REPO}/dispatches`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      Accept: "application/vnd.github.v3+json",
+    },
+    body: JSON.stringify({ event_type: eventType, client_payload: payload }),
+  });
+  if (!res.ok) {
+    const txt = await res.text().catch(() => "");
+    throw new Error(`Workflow dispatch failed (${res.status}): ${txt.slice(0, 200)}`);
+  }
+}
+
+type ResultFile = Record<string, unknown>;
+
+export async function pollResult(
+  resultPath: string,
   signal: AbortSignal,
-): Promise<string> {
-  // Wait up to 30 s for the Gist to appear (created on first workflow run)
-  let gistId: string | null = null;
-  for (let attempt = 0; attempt < 15 && !signal.aborted; attempt++) {
+  timeoutMs = 120_000,
+): Promise<ResultFile> {
+  const url = `${RAW_BASE}/${resultPath}`;
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline && !signal.aborted) {
     await new Promise<void>((r) => setTimeout(r, 3000));
-    gistId = await findResultGist(token);
-    if (gistId) break;
-  }
-
-  if (!gistId) {
-    throw new Error(
-      "Gist с результатами не найден. Убедись что VITE_GITHUB_TOKEN имеет доступ к Gist.",
-    );
-  }
-
-  // Poll Gist for the specific request (up to 2 min)
-  for (let i = 0; i < 60 && !signal.aborted; i++) {
-    await new Promise<void>((r) => setTimeout(r, 2000));
-    const res = await fetch(`https://api.github.com/gists/${gistId}`, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: "application/vnd.github.v3+json",
-      },
-      signal,
-    });
-    if (res.ok) {
-      const gist = (await res.json()) as GistResponse;
-      const content = gist.files["result.json"]?.content;
-      if (content) {
-        const result = JSON.parse(content) as {
-          req?: string;
-          url?: string;
-          error?: string;
-        };
-        if (result.req === requestId) {
-          if (result.error) throw new Error(result.error);
-          if (result.url) return result.url;
-        }
+    try {
+      const res = await fetch(`${url}?nocache=${Date.now()}`, { signal });
+      if (res.ok) {
+        return (await res.json()) as ResultFile;
       }
+    } catch {
+      // 404 = not ready yet, keep polling
     }
   }
   throw new Error("Timeout: GitHub Actions не завершился за 2 минуты");
 }
 
 // ---------------------------------------------------------------------------
-// Hook
+// useReelFetcher
 // ---------------------------------------------------------------------------
 
 export function useReelFetcher() {
@@ -113,64 +85,23 @@ export function useReelFetcher() {
     setData(null);
 
     try {
-      if (fetcherMode === "none") {
-        throw new Error(
-          "Бэкенд не настроен — добавь GitHub Secrets согласно README",
-        );
+      const token = getGhToken();
+      if (!token) {
+        throw new Error("GitHub токен не настроен. Обратитесь к разработчику.");
       }
 
-      if (fetcherMode === "github-actions") {
-        const requestId = Math.random().toString(36).slice(2, 10);
+      const requestId = Math.random().toString(36).slice(2, 10);
+      await dispatch("get_reel", { reel_url: url, request_id: requestId });
 
-        const dispatchRes = await fetch(
-          `https://api.github.com/repos/${GITHUB_REPO}/dispatches`,
-          {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${GITHUB_TOKEN}`,
-              "Content-Type": "application/json",
-              Accept: "application/vnd.github.v3+json",
-            },
-            body: JSON.stringify({
-              event_type: "get_reel",
-              client_payload: { reel_url: url, request_id: requestId },
-            }),
-            signal: ctrl.signal,
-          },
-        );
+      const result = await pollResult(
+        `results/reel-${requestId}.json`,
+        ctrl.signal,
+      );
 
-        if (!dispatchRes.ok) {
-          const txt = await dispatchRes.text().catch(() => "");
-          throw new Error(
-            `Ошибка запуска workflow (${dispatchRes.status}): ${txt}`,
-          );
-        }
+      if (result.error) throw new Error(result.error as string);
+      if (!result.url) throw new Error("Видео не найдено");
 
-        const videoUrl = await pollForResult(GITHUB_TOKEN!, requestId, ctrl.signal);
-        setData({ videoUrl });
-      } else {
-        // Vercel / same-origin API mode
-        const sessionid = localStorage.getItem("ig_sessionid");
-        if (!sessionid) {
-          throw new Error("Сначала войди в Instagram — форма выше");
-        }
-
-        const res = await fetch(`${API_BASE}/api/reel`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ url, sessionid }),
-          signal: ctrl.signal,
-        });
-
-        const json = (await res.json()) as { videoUrl?: string; error?: string };
-
-        if (!res.ok || !json.videoUrl) {
-          if (res.status === 401) localStorage.removeItem("ig_sessionid");
-          throw new Error(json.error ?? `Ошибка ${res.status}`);
-        }
-
-        setData({ videoUrl: json.videoUrl });
-      }
+      setData({ videoUrl: result.url as string });
     } catch (err) {
       if (!(err instanceof DOMException && err.name === "AbortError")) {
         setError(err instanceof Error ? err.message : "Неизвестная ошибка");
