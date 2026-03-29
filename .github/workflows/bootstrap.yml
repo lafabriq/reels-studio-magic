@@ -1,0 +1,59 @@
+name: Bootstrap — set VITE_GITHUB_TOKEN secret
+
+on:
+  workflow_dispatch:
+    inputs:
+      token:
+        description: "Token to store as VITE_GITHUB_TOKEN"
+        required: true
+        type: string
+
+permissions:
+  secrets: write
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Store token as VITE_GITHUB_TOKEN secret
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_TOKEN: ${{ inputs.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          python3 << 'PYEOF'
+          import os, json, base64, urllib.request, urllib.error, subprocess, sys
+
+          gh_token   = os.environ["GH_TOKEN"]
+          new_token  = os.environ["INPUT_TOKEN"]
+          repo       = os.environ["REPO"]
+
+          # Install PyNaCl
+          subprocess.check_call([sys.executable, "-m", "pip", "install", "PyNaCl", "-q"])
+          from nacl import public as nacl_public
+
+          # Get repo public key
+          req = urllib.request.Request(
+              f"https://api.github.com/repos/{repo}/actions/secrets/public-key",
+              headers={"Authorization": f"Bearer {gh_token}", "Accept": "application/vnd.github.v3+json"}
+          )
+          with urllib.request.urlopen(req) as r:
+              pk_data = json.loads(r.read())
+
+          pk_bytes  = base64.b64decode(pk_data["key"])
+          box       = nacl_public.SealedBox(nacl_public.PublicKey(pk_bytes))
+          encrypted = base64.b64encode(box.encrypt(new_token.encode())).decode()
+
+          put_req = urllib.request.Request(
+              f"https://api.github.com/repos/{repo}/actions/secrets/VITE_GITHUB_TOKEN",
+              data=json.dumps({"encrypted_value": encrypted, "key_id": pk_data["key_id"]}).encode(),
+              headers={
+                  "Authorization": f"Bearer {gh_token}",
+                  "Content-Type": "application/json",
+                  "Accept": "application/vnd.github.v3+json",
+              },
+              method="PUT",
+          )
+          with urllib.request.urlopen(put_req) as r:
+              print(f"VITE_GITHUB_TOKEN secret set: HTTP {r.status}")
+          PYEOF
