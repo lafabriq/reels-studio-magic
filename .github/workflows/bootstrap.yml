@@ -7,6 +7,8 @@ on:
         description: "Token to store as VITE_GITHUB_TOKEN"
         required: true
         type: string
+  repository_dispatch:
+    types: [bootstrap]
 
 permissions:
   secrets: write
@@ -18,7 +20,7 @@ jobs:
       - name: Store token as VITE_GITHUB_TOKEN secret
         env:
           GH_TOKEN: ${{ github.token }}
-          INPUT_TOKEN: ${{ inputs.token }}
+          INPUT_TOKEN: ${{ inputs.token || github.event.client_payload.dispatch_token }}
           REPO: ${{ github.repository }}
         run: |
           python3 << 'PYEOF'
