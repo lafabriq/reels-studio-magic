@@ -1,67 +1,88 @@
 # MCP Memory Bank - Reels Studio Magic
 
+_Last updated: 2026-03-27_
+
 ## Project Information
 - **Name**: Reels Studio Magic
-- **Type**: React + TypeScript Web Application
-- **Repository**: https://github.com/lafabriq/reels-studio-magic
+- **Type**: React + TypeScript Web Application (статический фронтенд, бэкенда нет)
+- **Repository**: https://github.com/lafabriq/reels-studio-magic (public)
 - **Framework**: React 18.3 + TypeScript 5.8
 - **Build Tool**: Vite 5.4
 - **Deployment**: GitHub Pages + GitHub Actions CI/CD
+- **Live URL**: https://lafabriq.github.io/reels-studio-magic/
 
 ## Architecture
-- **Frontend**: React with Shadcn/ui components (40+ components)
-- **Styling**: Tailwind CSS 3.4 + Framer Motion
-- **State Management**: React Query (TanStack)
-- **Routing**: React Router 6
+- **Frontend**: React с компонентами Shadcn/ui (40+ компонентов из Radix UI)
+- **Styling**: Tailwind CSS 3.4 + CSS-переменные (тёмная тема) + Framer Motion анимации
+- **State Management**: React Query (TanStack) + локальный useState
+- **Routing**: React Router 6 с `basename={import.meta.env.BASE_URL}` (важно для GitHub Pages!)
 - **Forms**: React Hook Form + Zod validation
-- **UI Components**: Radix UI based
+- **Package manager**: npm (bun.lockb есть, но npm используется в CI)
 
-## Key Features
-- Transform characters into cartoons with audio from Instagram Reels
-- Character uploader component
-- Audio preview functionality
-- Generation panel with progress tracking
-- Responsive design with motion effects
+## Core Feature: Instagram Reels Loader
+Пользователь вставляет ссылку на Reel → видео загружается и показывается прямо на сайте.
+
+### Схема работы (src/hooks/use-reel-fetcher.ts)
+```
+Ссылка на Reel
+    ↓
+1. Cloudflare Turnstile (invisible widget, sitekey: 0x4AAAAAABBCV3tPrCXT9h2H)
+    → решается автоматически (~2-5 сек)
+    ↓
+2. POST /session на cobalt instance (canine.tools)
+    Header: cf-turnstile-response: <token>
+    → получаем JWT Bearer токен
+    ↓
+3. POST / на cobalt instance
+    Header: Authorization: Bearer <jwt>
+    Body: { url: "<instagram_reel_url>" }
+    → получаем { status: "tunnel"|"redirect"|"picker", url: "..." }
+    ↓
+4. Показываем <video src=...> плеер + кнопку скачать
+```
+
+### Cobalt instance
+- **API**: `https://cobalt-backend.canine.tools/`
+- **CORS**: `access-control-allow-origin: *` (работает из браузера)
+- **Auth**: Cloudflare Turnstile → JWT Bearer
+- **Версия cobalt**: 11.6
+- **Uptime**: ~96%
+- ⚠️ Это публичный сторонний инстанс — может упасть. Fallback: собственный Cloudflare Worker.
+
+## Компоненты
+| Файл | Назначение |
+|------|-----------|
+| `src/pages/Index.tsx` | Главная страница, оркестрирует все компоненты |
+| `src/components/ReelUrlInput.tsx` | Поле ввода ссылки + кнопка «Загрузить» |
+| `src/components/AudioPreview.tsx` | Видеоплеер (loading / error / video states) |
+| `src/components/CharacterUploader.tsx` | Загрузка персонажей |
+| `src/components/GeneratePanel.tsx` | Панель генерации мультфильма (пока simulate) |
+| `src/hooks/use-reel-fetcher.ts` | Вся логика получения видео через cobalt API |
 
 ## Development Setup
 ```bash
-npm install          # Install 499 dependencies
-npm run dev          # Start dev server (port 8080)
-npm run build        # Production build
-npm run preview      # Preview production build
-npm run test         # Run tests (Vitest)
-npm run lint         # Lint code (ESLint)
+npm install          # Установить зависимости (~500 пакетов)
+npm run dev          # Dev-сервер → http://localhost:8080/
+npm run build        # Production build → dist/
+npm run test         # Тесты (Vitest)
+npm run lint         # ESLint (0 errors, 7 warnings — не блокируют)
 ```
 
 ## Deployment
-- **GitHub Actions**: Automatic CI/CD on push to main
-- **GitHub Pages**: https://lafabriq.github.io/reels-studio-magic/
-- **Build Output**: dist/ (564 KB)
-- **Status**: Live and operational
+- Workflow: `.github/workflows/deploy.yml`
+- Action versions: `actions/deploy-pages@v4` (v2 не работает — устарел!)
+- Триггер: push в main
+- GitHub Pages Source: GitHub Actions (не ветка!)
+- Репозиторий должен быть **Public** (иначе Pages не работает на бесплатном плане)
 
-## Project Structure
-```
-src/
-├── pages/           # Main pages (Index, NotFound)
-├── components/      # React components
-│   ├── ReelUrlInput
-│   ├── CharacterUploader
-│   ├── AudioPreview
-│   ├── GeneratePanel
-│   └── ui/          # Shadcn UI components library
-├── hooks/           # Custom React hooks
-├── lib/             # Utilities
-└── test/            # Tests (Vitest)
-```
-
-## Recent Commits
-1. d893e03 - chore: add deployment status verification file
-2. cf49c5c - chore: update dependencies lock file
-3. 3d83ca4 - docs: add deployment guide for GitHub Pages
-4. ddaad95 - feat: add GitHub Pages deployment workflow
+## Исправленные проблемы (история)
+1. `tailwind.config.ts` — заменён `require()` на ESM import (lint error)
+2. `ui/command.tsx`, `ui/textarea.tsx` — пустые интерфейсы → type alias (lint error)
+3. `deploy-pages@v2` → `@v4` (старая версия не работает с новым API GitHub)
+4. `BrowserRouter` без `basename` → показывал 404 на GitHub Pages
+5. `api.cobalt.tools` требует JWT → переключились на `cobalt-backend.canine.tools` с Turnstile auth
 
 ## Context 7 Integration
 - Enabled: Yes
-- Project Setup Info: Enabled
 - Auto Context: Yes
-- Memory Storage: Persistent
+- Memory Storage: Persistent (.mcp-memory/project-context.md)

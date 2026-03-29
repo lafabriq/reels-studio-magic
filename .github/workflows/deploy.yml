@@ -29,6 +29,10 @@ jobs:
         
       - name: Build project
         run: npm run build
+        env:
+          # Baked into the static JS bundle at build time.
+          # Set VITE_GITHUB_TOKEN as a repo Secret to enable GitHub Actions mode.
+          VITE_GITHUB_TOKEN: ${{ secrets.VITE_GITHUB_TOKEN }}
 
       - name: Setup Pages
         uses: actions/configure-pages@v4

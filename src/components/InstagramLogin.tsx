@@ -1,20 +1,91 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { LogIn, LogOut, Loader2, CheckCircle2, AlertCircle, Eye, EyeOff } from "lucide-react";
+import {
+  LogIn,
+  LogOut,
+  Loader2,
+  CheckCircle2,
+  AlertCircle,
+  Eye,
+  EyeOff,
+  Wrench,
+} from "lucide-react";
+import { fetcherMode } from "@/hooks/use-reel-fetcher";
 
-interface InstagramLoginProps {
+type InstagramLoginProps = {
   onSessionReady: (sessionid: string) => void;
-}
+};
 
-const API_BASE = import.meta.env.VITE_API_URL ?? "";
+// ---------------------------------------------------------------------------
+// Main component — renders different UI depending on the operating mode
+// ---------------------------------------------------------------------------
 
 const InstagramLogin = ({ onSessionReady }: InstagramLoginProps) => {
+  // GitHub Actions mode: session lives in GitHub Secrets, no on-site login needed
+  if (fetcherMode === "github-actions") {
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="glass rounded-xl px-4 py-3 flex items-center gap-2"
+      >
+        <CheckCircle2 className="w-4 h-4 text-green-500 shrink-0" />
+        <span className="text-sm font-body text-foreground">
+          Режим GitHub Actions — сессия Instagram настроена через Secrets
+        </span>
+      </motion.div>
+    );
+  }
+
+  // Unconfigured: neither VITE_GITHUB_TOKEN nor VITE_API_URL is set
+  if (fetcherMode === "none") {
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="glass rounded-xl p-4 space-y-2 border border-yellow-500/30"
+      >
+        <div className="flex items-center gap-2">
+          <Wrench className="w-4 h-4 text-yellow-400 shrink-0" />
+          <p className="text-sm font-semibold font-display text-foreground">
+            Настройка не завершена
+          </p>
+        </div>
+        <p className="text-xs text-muted-foreground font-body leading-relaxed">
+          Добавь GitHub Secrets и задеплой заново — инструкции в{" "}
+          <a
+            href="https://github.com/lafabriq/reels-studio-magic#setup"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline text-primary hover:opacity-80"
+          >
+            README
+          </a>
+          .
+        </p>
+      </motion.div>
+    );
+  }
+
+  // Vercel / same-origin API mode: show Instagram login form
+  return <VercelLoginForm onSessionReady={onSessionReady} />;
+};
+
+// ---------------------------------------------------------------------------
+// Login form — only rendered when fetcherMode === "vercel"
+// ---------------------------------------------------------------------------
+
+const API_BASE = (import.meta.env.VITE_API_URL ?? "") as string;
+
+function VercelLoginForm({ onSessionReady }: InstagramLoginProps) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [loggedIn, setLoggedIn] = useState(() => !!localStorage.getItem("ig_sessionid"));
+  const [loggedIn, setLoggedIn] = useState(
+    () => !!localStorage.getItem("ig_sessionid"),
+  );
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -28,7 +99,7 @@ const InstagramLogin = ({ onSessionReady }: InstagramLoginProps) => {
         body: JSON.stringify({ username: username.trim(), password }),
       });
 
-      const data = await res.json() as { sessionid?: string; error?: string };
+      const data = (await res.json()) as { sessionid?: string; error?: string };
 
       if (!res.ok || !data.sessionid) {
         throw new Error(data.error ?? `Ошибка ${res.status}`);
@@ -89,7 +160,8 @@ const InstagramLogin = ({ onSessionReady }: InstagramLoginProps) => {
         </p>
       </div>
       <p className="text-xs text-muted-foreground font-body">
-        Нужно для получения прямых ссылок на видеофайлы. Данные не хранятся — сохраняется только сессия.
+        Нужно для получения прямых ссылок на видеофайлы. Данные не хранятся —
+        сохраняется только сессия.
       </p>
 
       <form onSubmit={handleLogin} className="space-y-2">
@@ -118,7 +190,11 @@ const InstagramLogin = ({ onSessionReady }: InstagramLoginProps) => {
             className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
             tabIndex={-1}
           >
-            {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+            {showPassword ? (
+              <EyeOff className="w-4 h-4" />
+            ) : (
+              <Eye className="w-4 h-4" />
+            )}
           </button>
         </div>
 
@@ -151,6 +227,6 @@ const InstagramLogin = ({ onSessionReady }: InstagramLoginProps) => {
       </form>
     </motion.div>
   );
-};
+}
 
 export default InstagramLogin;

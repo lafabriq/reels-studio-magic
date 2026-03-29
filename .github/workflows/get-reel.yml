@@ -1,0 +1,106 @@
+name: Get Instagram Reel URL
+
+on:
+  repository_dispatch:
+    types: [get_reel]
+
+permissions:
+  contents: read
+
+jobs:
+  fetch-reel:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+
+    steps:
+      - name: Fetch Instagram video URL and update result Gist
+        env:
+          REEL_URL: ${{ github.event.client_payload.reel_url }}
+          REQUEST_ID: ${{ github.event.client_payload.request_id }}
+          IG_SESSION_ID: ${{ secrets.IG_SESSION_ID }}
+          GIST_TOKEN: ${{ secrets.VITE_GITHUB_TOKEN }}
+        run: |
+          python3 << 'PYEOF'
+          import os, re, json, urllib.request, urllib.error
+
+          reel_url    = os.environ.get('REEL_URL', '')
+          request_id  = os.environ.get('REQUEST_ID', '')
+          session_id  = os.environ.get('IG_SESSION_ID', '')
+          gist_token  = os.environ.get('GIST_TOKEN', '')
+
+          def gh_request(method, url, data=None, token=None):
+              headers = {'Accept': 'application/vnd.github.v3+json'}
+              if token:
+                  headers['Authorization'] = f'Bearer {token}'
+              if data is not None:
+                  headers['Content-Type'] = 'application/json'
+                  data = json.dumps(data).encode()
+              req = urllib.request.Request(url, data=data, headers=headers, method=method)
+              with urllib.request.urlopen(req, timeout=15) as r:
+                  return json.loads(r.read())
+
+          def find_or_create_gist(token):
+              gists = gh_request('GET', 'https://api.github.com/gists?per_page=50', token=token)
+              for g in gists:
+                  if g.get('description') == 'reels-studio-result':
+                      return g['id']
+              # Create a new private gist for results
+              g = gh_request('POST', 'https://api.github.com/gists', token=token, data={
+                  'description': 'reels-studio-result',
+                  'public': False,
+                  'files': {'result.json': {'content': '{}'}}
+              })
+              print(f"Created result Gist: {g['id']}")
+              return g['id']
+
+          def update_gist(token, result_obj):
+              gist_id = find_or_create_gist(token)
+              gh_request('PATCH', f'https://api.github.com/gists/{gist_id}', token=token, data={
+                  'files': {'result.json': {'content': json.dumps(result_obj)}}
+              })
+              print(f"Gist {gist_id} updated: {result_obj}")
+
+          # --- Main logic ---
+          m = re.search(r'(?:reel|p|tv)/([A-Za-z0-9_-]+)', reel_url)
+
+          if not m:
+              result = {"error": "Неверная ссылка на Instagram Reel", "req": request_id}
+          elif not session_id:
+              result = {"error": "Секрет IG_SESSION_ID не настроен в репозитории", "req": request_id}
+          else:
+              shortcode = m.group(1)
+              try:
+                  ig_req = urllib.request.Request(
+                      f'https://i.instagram.com/api/v1/media/by/shortcode?shortcode={shortcode}',
+                      headers={
+                          'User-Agent': 'Instagram 289.0.0.77.109 Android (28/9; 420dpi; 1080x2220; samsung; SM-A505F; a50; exynos9610; en_US; 314665256)',
+                          'Cookie': f'sessionid={session_id}',
+                          'X-IG-App-ID': '567067343352427',
+                          'Accept-Language': 'en-US',
+                          'Accept': '*/*',
+                      }
+                  )
+                  with urllib.request.urlopen(ig_req, timeout=15) as resp:
+                      data = json.loads(resp.read())
+
+                  media = data.get('media', data)
+                  versions = sorted(
+                      media.get('video_versions', []),
+                      key=lambda v: -(v.get('width', 0) * v.get('height', 0))
+                  )
+                  if versions:
+                      result = {"url": versions[0]['url'], "req": request_id}
+                  else:
+                      result = {"error": "Видео не найдено — Reel приватный или ссылка устарела", "req": request_id}
+
+              except urllib.error.HTTPError as e:
+                  body = e.read().decode(errors='ignore')[:200]
+                  if e.code in (401, 403):
+                      result = {"error": "Сессия Instagram истекла — обнови IG_SESSION_ID в Secrets репозитория", "req": request_id}
+                  else:
+                      result = {"error": f"Instagram ответил {e.code}: {body}", "req": request_id}
+              except Exception as e:
+                  result = {"error": str(e), "req": request_id}
+
+          update_gist(gist_token, result)
+          PYEOF
