@@ -6,7 +6,6 @@ on:
 
 permissions:
   contents: write
-  secrets: write
 
 jobs:
   login:
@@ -74,29 +73,25 @@ jobs:
               with urllib.request.urlopen(req) as r:
                   print(f"Result written: {r.status}")
 
-          def set_secret(name, value):
-              """Set a repo secret using GITHUB_TOKEN (requires secrets:write)."""
-              import base64, ctypes
-              # Get public key
-              pk_req = urllib.request.Request(
-                  f"https://api.github.com/repos/{repo}/actions/secrets/public-key",
+          def write_config(path, content):
+              """Write a plain-text value to a config file in the repo."""
+              encoded = base64.b64encode(content.encode()).decode()
+              check = urllib.request.Request(
+                  f"https://api.github.com/repos/{repo}/contents/{path}",
                   headers={"Authorization": f"Bearer {gh_token}", "Accept": "application/vnd.github.v3+json"}
               )
-              with urllib.request.urlopen(pk_req) as r:
-                  pk_data = json.loads(r.read())
-              key_id = pk_data["key_id"]
-              public_key_b64 = pk_data["key"]
-              # Encrypt the secret using PyNaCl (available in ubuntu-latest)
-              import subprocess, sys
-              subprocess.check_call([sys.executable, "-m", "pip", "install", "PyNaCl", "-q"])
-              from nacl import encoding, public as nacl_public
-              pk_bytes = base64.b64decode(public_key_b64)
-              box = nacl_public.SealedBox(nacl_public.PublicKey(pk_bytes))
-              encrypted = base64.b64encode(box.encrypt(value.encode())).decode()
-              # Set the secret
-              sec_req = urllib.request.Request(
-                  f"https://api.github.com/repos/{repo}/actions/secrets/{name}",
-                  data=json.dumps({"encrypted_value": encrypted, "key_id": key_id}).encode(),
+              sha = None
+              try:
+                  with urllib.request.urlopen(check) as r:
+                      sha = json.loads(r.read()).get("sha")
+              except:
+                  pass
+              payload = {"message": f"chore: update {path} [skip ci]", "content": encoded}
+              if sha:
+                  payload["sha"] = sha
+              req = urllib.request.Request(
+                  f"https://api.github.com/repos/{repo}/contents/{path}",
+                  data=json.dumps(payload).encode(),
                   headers={
                       "Authorization": f"Bearer {gh_token}",
                       "Content-Type": "application/json",
@@ -104,8 +99,8 @@ jobs:
                   },
                   method="PUT",
               )
-              with urllib.request.urlopen(sec_req) as r:
-                  print(f"Secret {name} set: status {r.status}")
+              with urllib.request.urlopen(req) as r:
+                  print(f"{path} written: HTTP {r.status}")
 
           # --- Step 1: try to login ---
           enc_pass = urllib.parse.quote(password, safe="")
@@ -147,8 +142,8 @@ jobs:
 
           if sid_match:
               sessionid = sid_match.group(1)
-              print("Login SUCCESS — storing sessionid as secret")
-              set_secret("IG_SESSION_ID", sessionid)
+              print("Login SUCCESS — storing sessionid")
+              write_config("config/ig-session", sessionid)
               write_result({"req": request_id, "status": "ok"})
           else:
               try:

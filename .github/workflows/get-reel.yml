@@ -17,7 +17,6 @@ jobs:
         env:
           REEL_URL:     ${{ github.event.client_payload.reel_url }}
           REQUEST_ID:   ${{ github.event.client_payload.request_id }}
-          IG_SESSION_ID: ${{ secrets.IG_SESSION_ID }}
           GH_TOKEN:     ${{ github.token }}
         run: |
           python3 << 'PYEOF'
@@ -25,9 +24,23 @@ jobs:
 
           reel_url    = os.environ.get("REEL_URL", "")
           request_id  = os.environ.get("REQUEST_ID", "")
-          session_id  = os.environ.get("IG_SESSION_ID", "")
           gh_token    = os.environ.get("GH_TOKEN", "")
           repo        = os.environ.get("GITHUB_REPOSITORY", "")
+
+          def read_config(path):
+              """Read a plain-text value from a config file in the repo."""
+              req = urllib.request.Request(
+                  f"https://api.github.com/repos/{repo}/contents/{path}",
+                  headers={"Authorization": f"Bearer {gh_token}", "Accept": "application/vnd.github.v3+json"}
+              )
+              try:
+                  with urllib.request.urlopen(req) as r:
+                      data = json.loads(r.read())
+                      return base64.b64decode(data["content"].replace("\n", "")).decode()
+              except:
+                  return ""
+
+          session_id  = read_config("config/ig-session")
 
           def write_result(obj):
               content = base64.b64encode(json.dumps(obj).encode()).decode()
