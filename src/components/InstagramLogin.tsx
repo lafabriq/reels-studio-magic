@@ -9,6 +9,7 @@ import {
   Eye,
   EyeOff,
   KeyRound,
+  Link2,
 } from "lucide-react";
 import { useInstagramLogin } from "@/hooks/use-instagram-login";
 import { getGhToken } from "@/hooks/use-reel-fetcher";
@@ -25,8 +26,10 @@ const InstagramLogin = ({ onSessionReady }: Props) => {
   const [showPassword, setShowPassword] = useState(false);
   const [code, setCode] = useState("");
   const [alreadyLoggedIn] = useState(() => !!localStorage.getItem("ig_logged_in"));
+  const [ghTokenInput, setGhTokenInput] = useState("");
+  const [ghTokenSaved, setGhTokenSaved] = useState(false);
 
-  const noToken = !getGhToken();
+  const noToken = !getGhToken() && !ghTokenSaved;
 
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
@@ -69,19 +72,60 @@ const InstagramLogin = ({ onSessionReady }: Props) => {
     );
   }
 
-  // No GitHub token — show warning
+  // No GitHub token — show onboarding to connect to GitHub
   if (noToken) {
+    const handleSaveToken = (e: React.FormEvent) => {
+      e.preventDefault();
+      const t = ghTokenInput.trim();
+      if (!t) return;
+      localStorage.setItem("gh_token", t);
+      setGhTokenSaved(true);
+    };
+
     return (
       <motion.div
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
-        className="glass rounded-xl p-4 border border-yellow-500/30 text-sm text-muted-foreground font-body"
+        className="glass rounded-xl p-4 space-y-3"
       >
-        ⚙️ Бэкенд не настроен. Если ты разработчик — открой консоль и выполни:
-        <br />
-        <code className="text-xs bg-black/30 px-1 rounded">
-          localStorage.setItem('gh_token', 'ВАШ_ТОКЕН')
-        </code>
+        <div className="flex items-center gap-2">
+          <Link2 className="w-4 h-4 text-primary shrink-0" />
+          <p className="text-sm font-semibold font-display text-foreground">
+            Подключи GitHub-аккаунт
+          </p>
+        </div>
+        <p className="text-xs text-muted-foreground font-body leading-relaxed">
+          Сервис использует GitHub для обработки видео. Создай{" "}
+          <a
+            href="https://github.com/settings/tokens/new?scopes=public_repo,workflow&description=reels-studio"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-primary underline underline-offset-2"
+          >
+            Personal Access Token
+          </a>{" "}
+          с правами <code className="bg-black/30 px-1 rounded">public_repo</code> и{" "}
+          <code className="bg-black/30 px-1 rounded">workflow</code>, затем вставь его ниже.
+        </p>
+        <form onSubmit={handleSaveToken} className="space-y-2">
+          <input
+            type="password"
+            placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"
+            value={ghTokenInput}
+            onChange={(e) => setGhTokenInput(e.target.value)}
+            autoComplete="off"
+            required
+            className="w-full bg-background/50 border border-border rounded-lg px-3 py-2 text-sm font-body text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+          />
+          <button
+            type="submit"
+            disabled={!ghTokenInput.trim()}
+            className="w-full flex items-center justify-center gap-2 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-display font-semibold disabled:opacity-50 hover:opacity-90 transition-opacity"
+          >
+            <Link2 className="w-4 h-4" />
+            Сохранить и продолжить
+          </button>
+        </form>
       </motion.div>
     );
   }

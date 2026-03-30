@@ -27,17 +27,8 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Load dispatch token
-        id: dispatch_token
-        run: |
-          TOKEN=$(cat config/dispatch-token 2>/dev/null | python3 -c "import sys,base64; print(base64.b64decode(sys.stdin.read().strip()).decode())" 2>/dev/null || echo "")
-          echo "value=$TOKEN" >> $GITHUB_OUTPUT
-        
       - name: Build project
         run: npm run build
-        env:
-          # Read from config/dispatch-token file (written by bootstrap workflow)
-          VITE_GITHUB_TOKEN: ${{ steps.dispatch_token.outputs.value }}
 
       - name: Setup Pages
         uses: actions/configure-pages@v4
