@@ -1,19 +1,12 @@
 const Index = () => {
   return (
-    <div className="min-h-screen bg-background relative">
+    <div className="min-h-screen bg-white relative">
       {/* Logo top-left */}
-      <header className="absolute top-0 left-0 p-6">
-        <span className="text-sm font-semibold text-foreground tracking-widest lowercase select-none">
+      <header className="absolute top-0 left-0 p-8">
+        <span className="text-xs font-light text-neutral-400 tracking-[0.3em] lowercase select-none">
           la content fabrique
         </span>
       </header>
-
-      {/* Center */}
-      <div className="flex items-center justify-center min-h-screen">
-        <h1 className="text-5xl font-bold text-foreground tracking-widest lowercase">
-          la content fabrique
-        </h1>
-      </div>
     </div>
   );
 };
