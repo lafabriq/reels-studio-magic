@@ -1,0 +1,180 @@
+name: Reel to Carousel
+
+on:
+  repository_dispatch:
+    types: [reel_to_carousel]
+
+permissions:
+  contents: write
+
+jobs:
+  process:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Download reel, transcribe, generate slides
+        env:
+          REEL_URL:   ${{ github.event.client_payload.reel_url }}
+          REQUEST_ID: ${{ github.event.client_payload.request_id }}
+          GH_TOKEN:   ${{ github.token }}
+        run: |
+          python3 << 'PYEOF'
+          import os, re, json, subprocess, base64, urllib.request, urllib.error, sys
+
+          reel_url   = os.environ.get("REEL_URL", "")
+          request_id = os.environ.get("REQUEST_ID", "")
+          gh_token   = os.environ.get("GH_TOKEN", "")
+          repo       = os.environ.get("GITHUB_REPOSITORY", "")
+
+          def write_result(obj):
+              content = base64.b64encode(json.dumps(obj, ensure_ascii=False).encode()).decode()
+              path = f"results/carousel-{request_id}.json"
+              check = urllib.request.Request(
+                  f"https://api.github.com/repos/{repo}/contents/{path}",
+                  headers={"Authorization": f"Bearer {gh_token}", "Accept": "application/vnd.github.v3+json"}
+              )
+              sha = None
+              try:
+                  with urllib.request.urlopen(check) as r:
+                      sha = json.loads(r.read()).get("sha")
+              except:
+                  pass
+              payload = {"message": f"carousel:{request_id}", "content": content}
+              if sha:
+                  payload["sha"] = sha
+              req = urllib.request.Request(
+                  f"https://api.github.com/repos/{repo}/contents/{path}",
+                  data=json.dumps(payload).encode(),
+                  headers={
+                      "Authorization": f"Bearer {gh_token}",
+                      "Content-Type": "application/json",
+                      "Accept": "application/vnd.github.v3+json",
+                  },
+                  method="PUT",
+              )
+              with urllib.request.urlopen(req) as r:
+                  print(f"Result written: {r.status}")
+
+          # --- Normalize URL ---
+          m = re.search(r"/(reel|p)/([^/?#]+)", reel_url)
+          if not m:
+              write_result({"req": request_id, "error": "Неверная ссылка на Instagram Reel"})
+              sys.exit(0)
+
+          shortcode = m.group(2)
+          clean_url = f"https://www.instagram.com/{m.group(1)}/{shortcode}/"
+          print(f"Shortcode: {shortcode}")
+          print(f"URL: {clean_url}")
+
+          # --- Step 1: Install tools ---
+          print("Installing yt-dlp and whisper...")
+          subprocess.run(["pip", "install", "-q", "yt-dlp", "openai-whisper"], check=True)
+
+          # --- Step 2: Download video ---
+          print("Downloading video...")
+          video_path = "/tmp/reel.mp4"
+          audio_path = "/tmp/reel.wav"
+
+          dl = subprocess.run([
+              "yt-dlp", "-o", video_path,
+              "--no-check-certificates", "--no-playlist",
+              "--merge-output-format", "mp4",
+              "--format", "bv*+ba/b",
+              "--retries", "3",
+              "--add-header", "User-Agent:Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+              "--add-header", "Referer:https://www.instagram.com/",
+              clean_url
+          ], capture_output=True, text=True, timeout=120)
+
+          if dl.returncode != 0 or not os.path.exists(video_path):
+              print(f"yt-dlp stderr: {dl.stderr[:300]}")
+              write_result({"req": request_id, "error": f"Не удалось скачать видео: {dl.stderr[:200]}"})
+              sys.exit(0)
+
+          size = os.path.getsize(video_path)
+          print(f"Video: {size / 1024 / 1024:.1f} MB")
+
+          if size < 10000:
+              write_result({"req": request_id, "error": "Видео слишком маленькое — возможно, пост приватный"})
+              sys.exit(0)
+
+          # --- Step 3: Extract audio ---
+          print("Extracting audio...")
+          subprocess.run([
+              "ffmpeg", "-y", "-i", video_path,
+              "-vn", "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le",
+              audio_path
+          ], capture_output=True, timeout=30, check=True)
+          print(f"Audio: {os.path.getsize(audio_path) / 1024:.0f} KB")
+
+          # --- Step 4: Transcribe ---
+          print("Transcribing with Whisper...")
+          result = subprocess.run([
+              "whisper", audio_path,
+              "--model", "tiny",
+              "--language", "ru",
+              "--output_format", "txt",
+              "--output_dir", "/tmp"
+          ], capture_output=True, text=True, timeout=300)
+
+          txt_path = "/tmp/reel.txt"
+          if not os.path.exists(txt_path):
+              write_result({"req": request_id, "error": f"Whisper не создал транскрипцию: {result.stderr[:200]}"})
+              sys.exit(0)
+
+          transcript = open(txt_path).read().strip()
+          print(f"Transcript ({len(transcript)} chars): {transcript[:200]}...")
+
+          if not transcript:
+              write_result({"req": request_id, "error": "В рилсе нет речи или аудио не распознано"})
+              sys.exit(0)
+
+          # --- Step 5: Generate slides ---
+          print("Generating slides...")
+
+          blocks = [b.strip() for b in re.split(r'\n{2,}', transcript) if b.strip()]
+          if len(blocks) < 4:
+              blocks = [b.strip() for b in re.split(r'(?<=[.!?…])\s+', transcript) if len(b.strip()) > 5]
+          if len(blocks) < 4:
+              blocks = [b.strip() for b in transcript.split('\n') if b.strip()]
+          if len(blocks) < 4:
+              words = transcript.split()
+              blocks = []
+              for i in range(0, len(words), 15):
+                  blocks.append(' '.join(words[i:i+15]))
+
+          def trunc(s, mx):
+              return s if len(s) <= mx else s[:mx-1] + '…'
+
+          def pick(idx):
+              return blocks[idx] if idx < len(blocks) else ''
+
+          first = (re.match(r'^.+?[.!?…]+', transcript) or type('', (), {'group': lambda self, *a: transcript[:80]})()).group(0).strip()
+
+          icons = ['⚡', '🎯', '✨', '🔒']
+
+          slides = [
+              {"id":"1","type":"hero","bgMode":"light","tag":"РИЛС → КАРУСЕЛЬ","heading":trunc(first,80),"body":trunc(pick(1) or "Свайпни чтобы узнать больше →",120)},
+              {"id":"2","type":"problem","bgMode":"dark","tag":"КОНТЕКСТ","heading":trunc(pick(2) or pick(1) or "Знакомо?",70),"body":trunc(pick(3) or "Многие сталкиваются.",120),"pills":[trunc(b,30) for b in blocks[4:7]]},
+              {"id":"3","type":"solution","bgMode":"gradient","tag":"ГЛАВНАЯ МЫСЛЬ","heading":trunc(pick(4) or pick(2) or "Вот что важно",70),"body":trunc(pick(5) or first,130)},
+              {"id":"4","type":"features","bgMode":"light","tag":"КЛЮЧЕВЫЕ МОМЕНТЫ","heading":"Что нужно знать","body":"","features":[{"icon":icons[i%4],"label":trunc((b.split('—')[0] if '—' in b else b),40),"description":trunc((b.split('—')[1] if '—' in b else ''),60)} for i,b in enumerate(blocks[3:7])]},
+              {"id":"5","type":"details","bgMode":"dark","tag":"ПОДРОБНЕЕ","heading":trunc(pick(7) or pick(5) or "Почему это важно",70),"body":trunc(pick(8) or pick(6) or "Разберёмся.",150)},
+              {"id":"6","type":"howto","bgMode":"light","tag":"ПЛАН ДЕЙСТВИЙ","heading":"3 простых шага","body":"","steps":[{"title":trunc(pick(9) or "Первый шаг",40),"description":""},{"title":trunc(pick(10) or "Второй шаг",40),"description":""},{"title":trunc(pick(11) or "Третий шаг",40),"description":""}]},
+              {"id":"7","type":"cta","bgMode":"gradient","tag":"ДЕЙСТВУЙ","heading":trunc(blocks[-1] if blocks else "Сохрани →",70),"body":"Ставь ❤️ и подпишись","ctaText":"Подписаться →"},
+          ]
+
+          # Ensure features has at least 2 items
+          if len(slides[3]["features"]) < 2:
+              slides[3]["features"] = [
+                  {"icon":"⚡","label":"Быстро","description":"Результат за минуты"},
+                  {"icon":"🎯","label":"Точно","description":"Без лишних действий"},
+              ]
+
+          write_result({
+              "req": request_id,
+              "transcript": transcript,
+              "slides": slides,
+          })
+          print("Done!")
+          PYEOF
