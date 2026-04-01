@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 
 const Index = () => {
   const [url, setUrl] = useState("");
@@ -19,10 +20,16 @@ const Index = () => {
   return (
     <div className="min-h-screen bg-white">
       {/* Logo */}
-      <header className="p-8">
+      <header className="p-8 flex items-center justify-between">
         <span className="text-xs font-light text-neutral-700 tracking-[0.3em] lowercase select-none">
           la content fabrique
         </span>
+        <Link
+          to="/carousel"
+          className="px-4 py-2 text-xs tracking-widest uppercase bg-neutral-900 text-white hover:bg-neutral-700 transition-colors"
+        >
+          Carousel Generator
+        </Link>
       </header>
 
       <main className="max-w-xl mx-auto px-6 pt-16 space-y-8">
