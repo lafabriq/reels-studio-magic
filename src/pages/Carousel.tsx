@@ -9,8 +9,11 @@ import SlideEditor from '@/components/carousel/SlideEditor';
 import CarouselPreview from '@/components/carousel/CarouselPreview';
 
 const STATUS_LABELS: Record<string, string> = {
-  dispatching: 'Запускаем обработку…',
-  processing: 'Скачиваем и транскрибируем рилс…',
+  turnstile: 'Проходим проверку…',
+  'fetching-video': 'Получаем ссылку на видео…',
+  downloading: 'Скачиваем видео…',
+  transcribing: 'Распознаём речь (модель Whisper загружается в браузер)…',
+  generating: 'Генерируем слайды…',
   done: 'Готово!',
   error: 'Ошибка',
 };
@@ -19,7 +22,7 @@ export default function Carousel() {
   const [reelUrl, setReelUrl] = useState('');
   const [reelText, setReelText] = useState('');
   const [mode, setMode] = useState<'url' | 'text'>('url');
-  const { status, error: pipelineError, transcript, process: processReel, stop } = useReelToCarousel();
+  const { status, error: pipelineError, transcript, progress, process: processReel, stop } = useReelToCarousel();
   const [brand, setBrand] = useState<BrandConfig>({
     name: 'Your Brand',
     handle: '@yourbrand',
@@ -48,7 +51,7 @@ export default function Carousel() {
   }, [fontPair.googleUrl]);
 
   const isValidUrl = /instagram\.com\/(reel|p)\//.test(reelUrl);
-  const isProcessing = status === 'dispatching' || status === 'processing';
+  const isProcessing = status !== 'idle' && status !== 'done' && status !== 'error';
 
   const handleUrlSubmit = () => {
     if (!isValidUrl || isProcessing) return;
@@ -152,7 +155,7 @@ export default function Carousel() {
                 {/* Status */}
                 {status !== 'idle' && (
                   <div
-                    className="rounded-lg px-3 py-2 text-xs"
+                    className="rounded-lg px-3 py-2 text-xs space-y-2"
                     style={{
                       background: status === 'error' ? 'hsl(0,60%,15%)' : status === 'done' ? 'hsl(140,40%,15%)' : 'hsl(220,15%,14%)',
                       color: status === 'error' ? 'hsl(0,80%,70%)' : status === 'done' ? 'hsl(140,60%,70%)' : 'hsl(175,80%,50%)',
@@ -161,9 +164,17 @@ export default function Carousel() {
                   >
                     {status === 'error' ? `❌ ${pipelineError}` : STATUS_LABELS[status] || ''}
                     {isProcessing && (
-                      <span className="block mt-1" style={{ color: 'hsl(215,15%,50%)' }}>
-                        Обычно занимает 2–4 минуты…
-                      </span>
+                      <>
+                        <div className="w-full rounded-full overflow-hidden" style={{ height: 4, background: 'hsl(220,15%,22%)' }}>
+                          <div
+                            className="h-full rounded-full transition-all duration-500"
+                            style={{ width: `${progress}%`, background: 'hsl(175,80%,50%)' }}
+                          />
+                        </div>
+                        <span className="block" style={{ color: 'hsl(215,15%,50%)' }}>
+                          Всё происходит в твоём браузере — ничего не уходит на сервер
+                        </span>
+                      </>
                     )}
                     {!isProcessing && (
                       <button
