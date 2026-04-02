@@ -58,7 +58,10 @@ export function useReelToCarousel() {
       if (!container) {
         container = document.createElement('div');
         container.id = 'turnstile-container';
-        container.style.display = 'none';
+        // Turnstile REQUIRES container to NOT be display:none
+        // Position it offscreen but technically "visible"
+        container.style.cssText =
+          'position:fixed;bottom:-1px;right:-1px;width:1px;height:1px;overflow:hidden;opacity:0.01;pointer-events:none;z-index:-1';
         document.body.appendChild(container);
       }
       container.innerHTML = '';
@@ -80,7 +83,6 @@ export function useReelToCarousel() {
           reject(new Error('Проверка Turnstile не пройдена. Попробуй ещё раз.'));
         },
         size: 'invisible',
-        appearance: 'interaction-only',
       });
     });
 
