@@ -2,16 +2,16 @@ import { useState, useMemo, useEffect } from 'react';
 import { deriveColorSystem } from '@/lib/color-utils';
 import { FONT_PAIRS, createDefaultSlides } from '@/lib/carousel-types';
 import { textToSlides } from '@/lib/text-to-slides';
-import { useReelToCarousel } from '@/hooks/use-reel-to-carousel';
+import { useReelToCarousel, getSessionId, clearSession } from '@/hooks/use-reel-to-carousel';
 import type { BrandConfig, SlideData } from '@/lib/carousel-types';
 import BrandForm from '@/components/carousel/BrandForm';
 import SlideEditor from '@/components/carousel/SlideEditor';
 import CarouselPreview from '@/components/carousel/CarouselPreview';
 
 const STATUS_LABELS: Record<string, string> = {
-  turnstile: '🔐 Проходим проверку…',
-  'fetching-video': '🔗 Получаем ссылку на аудио…',
-  downloading: '⬇️ Скачиваем аудио из рилса…',
+  'logging-in': '🔐 Входим в Instagram…',
+  'fetching-video': '🔗 Получаем видео из Instagram…',
+  downloading: '⬇️ Скачиваем видео…',
   'loading-model': '🧠 Загружаем модель Whisper (первый раз ~40 МБ)…',
   transcribing: '🎙️ Распознаём речь…',
   generating: '🎨 Генерируем слайды…',
@@ -23,7 +23,10 @@ export default function Carousel() {
   const [reelUrl, setReelUrl] = useState('');
   const [reelText, setReelText] = useState('');
   const [mode, setMode] = useState<'url' | 'text'>('url');
-  const { status, error: pipelineError, transcript, progress, process: processReel, stop } = useReelToCarousel();
+  const [igUser, setIgUser] = useState('');
+  const [igPass, setIgPass] = useState('');
+  const [loggedIn, setLoggedIn] = useState(() => !!getSessionId());
+  const { status, error: pipelineError, transcript, progress, process: processReel, stop, login } = useReelToCarousel();
   const [brand, setBrand] = useState<BrandConfig>({
     name: 'Your Brand',
     handle: '@yourbrand',
@@ -53,6 +56,20 @@ export default function Carousel() {
 
   const isValidUrl = /instagram\.com\/(reel|p)\//.test(reelUrl);
   const isProcessing = status !== 'idle' && status !== 'done' && status !== 'error';
+
+  const handleLogin = async () => {
+    if (!igUser.trim() || !igPass.trim()) return;
+    const ok = await login(igUser, igPass);
+    if (ok) {
+      setLoggedIn(true);
+      setIgPass('');
+    }
+  };
+
+  const handleLogout = () => {
+    clearSession();
+    setLoggedIn(false);
+  };
 
   const handleUrlSubmit = () => {
     if (!isValidUrl || isProcessing) return;
@@ -120,75 +137,141 @@ export default function Carousel() {
 
             {mode === 'url' ? (
               <>
-                <p className="text-xs" style={{ color: 'hsl(215,15%,50%)' }}>
-                  Вставь ссылку на Instagram Reel — видео скачается и превратится в карусель.
-                  <br />
-                  <span style={{ color: 'hsl(30,80%,60%)' }}>⚠ Работает в Chrome и Firefox. Встроенные браузеры (VS Code, Telegram) не поддерживаются.</span>
-                </p>
-                <input
-                  type="url"
-                  value={reelUrl}
-                  onChange={e => setReelUrl(e.target.value)}
-                  placeholder="https://www.instagram.com/reel/ABC123..."
-                  disabled={isProcessing}
-                  className="w-full rounded-lg px-3 py-2.5 text-sm outline-none transition-colors"
-                  style={{
-                    background: 'hsl(220,15%,14%)',
-                    border: '1px solid hsl(220,15%,22%)',
-                    color: 'hsl(210,20%,92%)',
-                    opacity: isProcessing ? 0.5 : 1,
-                  }}
-                  onFocus={e => e.target.style.borderColor = 'hsl(175,80%,50%)'}
-                  onBlur={e => e.target.style.borderColor = 'hsl(220,15%,22%)'}
-                  onKeyDown={e => { if (e.key === 'Enter') handleUrlSubmit(); }}
-                />
-                <button
-                  onClick={handleUrlSubmit}
-                  disabled={!isValidUrl || isProcessing}
-                  className="w-full py-2.5 rounded-lg text-sm font-semibold transition-all disabled:opacity-30"
-                  style={{
-                    background: isValidUrl && !isProcessing ? 'hsl(175,80%,50%)' : 'hsl(220,15%,18%)',
-                    color: isValidUrl && !isProcessing ? 'hsl(220,20%,7%)' : 'hsl(215,15%,40%)',
-                    cursor: isValidUrl && !isProcessing ? 'pointer' : 'not-allowed',
-                  }}
-                >
-                  {isProcessing ? '⏳ Обрабатывается…' : '🎬 Создать карусель из рилса'}
-                </button>
-
-                {/* Status */}
-                {status !== 'idle' && (
-                  <div
-                    className="rounded-lg px-3 py-2 text-xs space-y-2"
-                    style={{
-                      background: status === 'error' ? 'hsl(0,60%,15%)' : status === 'done' ? 'hsl(140,40%,15%)' : 'hsl(220,15%,14%)',
-                      color: status === 'error' ? 'hsl(0,80%,70%)' : status === 'done' ? 'hsl(140,60%,70%)' : 'hsl(175,80%,50%)',
-                      border: `1px solid ${status === 'error' ? 'hsl(0,40%,25%)' : status === 'done' ? 'hsl(140,30%,25%)' : 'hsl(220,15%,22%)'}`,
-                    }}
-                  >
-                    {status === 'error' ? `❌ ${pipelineError}` : STATUS_LABELS[status] || ''}
-                    {isProcessing && (
-                      <>
-                        <div className="w-full rounded-full overflow-hidden" style={{ height: 4, background: 'hsl(220,15%,22%)' }}>
-                          <div
-                            className="h-full rounded-full transition-all duration-500"
-                            style={{ width: `${progress}%`, background: 'hsl(175,80%,50%)' }}
-                          />
-                        </div>
-                        <span className="block" style={{ color: 'hsl(215,15%,50%)' }}>
-                          Всё происходит в твоём браузере — ничего не уходит на сервер
-                        </span>
-                      </>
-                    )}
-                    {!isProcessing && (
-                      <button
-                        onClick={() => { stop(); setReelUrl(''); }}
-                        className="mt-1 underline"
-                        style={{ color: 'hsl(215,15%,50%)' }}
-                      >
-                        Сбросить
-                      </button>
+                {!loggedIn ? (
+                  /* ─── Instagram Login Form ─── */
+                  <div className="space-y-2">
+                    <p className="text-xs" style={{ color: 'hsl(215,15%,50%)' }}>
+                      Войди в Instagram — нужно для скачивания рилсов
+                    </p>
+                    <input
+                      type="text"
+                      value={igUser}
+                      onChange={e => setIgUser(e.target.value)}
+                      placeholder="Логин Instagram"
+                      className="w-full rounded-lg px-3 py-2.5 text-sm outline-none transition-colors"
+                      style={{
+                        background: 'hsl(220,15%,14%)',
+                        border: '1px solid hsl(220,15%,22%)',
+                        color: 'hsl(210,20%,92%)',
+                      }}
+                      onFocus={e => e.target.style.borderColor = 'hsl(175,80%,50%)'}
+                      onBlur={e => e.target.style.borderColor = 'hsl(220,15%,22%)'}
+                    />
+                    <input
+                      type="password"
+                      value={igPass}
+                      onChange={e => setIgPass(e.target.value)}
+                      placeholder="Пароль"
+                      className="w-full rounded-lg px-3 py-2.5 text-sm outline-none transition-colors"
+                      style={{
+                        background: 'hsl(220,15%,14%)',
+                        border: '1px solid hsl(220,15%,22%)',
+                        color: 'hsl(210,20%,92%)',
+                      }}
+                      onFocus={e => e.target.style.borderColor = 'hsl(175,80%,50%)'}
+                      onBlur={e => e.target.style.borderColor = 'hsl(220,15%,22%)'}
+                      onKeyDown={e => { if (e.key === 'Enter') handleLogin(); }}
+                    />
+                    <button
+                      onClick={handleLogin}
+                      disabled={!igUser.trim() || !igPass.trim() || status === 'logging-in'}
+                      className="w-full py-2.5 rounded-lg text-sm font-semibold transition-all disabled:opacity-30"
+                      style={{
+                        background: igUser.trim() && igPass.trim() ? 'hsl(175,80%,50%)' : 'hsl(220,15%,18%)',
+                        color: igUser.trim() && igPass.trim() ? 'hsl(220,20%,7%)' : 'hsl(215,15%,40%)',
+                        cursor: igUser.trim() && igPass.trim() ? 'pointer' : 'not-allowed',
+                      }}
+                    >
+                      {status === 'logging-in' ? '⏳ Входим…' : '🔑 Войти в Instagram'}
+                    </button>
+                    {status === 'error' && pipelineError && (
+                      <p className="text-xs px-2 py-1.5 rounded-lg" style={{
+                        background: 'hsl(0,60%,15%)',
+                        color: 'hsl(0,80%,70%)',
+                        border: '1px solid hsl(0,40%,25%)',
+                      }}>
+                        ❌ {pipelineError}
+                      </p>
                     )}
                   </div>
+                ) : (
+                  /* ─── Reel URL Input (after login) ─── */
+                  <>
+                    <div className="flex items-center justify-between">
+                      <p className="text-xs" style={{ color: 'hsl(140,60%,50%)' }}>
+                        ✅ Вы вошли в Instagram
+                      </p>
+                      <button
+                        onClick={handleLogout}
+                        className="text-xs underline"
+                        style={{ color: 'hsl(215,15%,50%)' }}
+                      >
+                        Выйти
+                      </button>
+                    </div>
+                    <input
+                      type="url"
+                      value={reelUrl}
+                      onChange={e => setReelUrl(e.target.value)}
+                      placeholder="https://www.instagram.com/reel/ABC123..."
+                      disabled={isProcessing}
+                      className="w-full rounded-lg px-3 py-2.5 text-sm outline-none transition-colors"
+                      style={{
+                        background: 'hsl(220,15%,14%)',
+                        border: '1px solid hsl(220,15%,22%)',
+                        color: 'hsl(210,20%,92%)',
+                        opacity: isProcessing ? 0.5 : 1,
+                      }}
+                      onFocus={e => e.target.style.borderColor = 'hsl(175,80%,50%)'}
+                      onBlur={e => e.target.style.borderColor = 'hsl(220,15%,22%)'}
+                      onKeyDown={e => { if (e.key === 'Enter') handleUrlSubmit(); }}
+                    />
+                    <button
+                      onClick={handleUrlSubmit}
+                      disabled={!isValidUrl || isProcessing}
+                      className="w-full py-2.5 rounded-lg text-sm font-semibold transition-all disabled:opacity-30"
+                      style={{
+                        background: isValidUrl && !isProcessing ? 'hsl(175,80%,50%)' : 'hsl(220,15%,18%)',
+                        color: isValidUrl && !isProcessing ? 'hsl(220,20%,7%)' : 'hsl(215,15%,40%)',
+                        cursor: isValidUrl && !isProcessing ? 'pointer' : 'not-allowed',
+                      }}
+                    >
+                      {isProcessing ? '⏳ Обрабатывается…' : '🎬 Создать карусель из рилса'}
+                    </button>
+
+                    {/* Status */}
+                    {status !== 'idle' && (
+                      <div
+                        className="rounded-lg px-3 py-2 text-xs space-y-2"
+                        style={{
+                          background: status === 'error' ? 'hsl(0,60%,15%)' : status === 'done' ? 'hsl(140,40%,15%)' : 'hsl(220,15%,14%)',
+                          color: status === 'error' ? 'hsl(0,80%,70%)' : status === 'done' ? 'hsl(140,60%,70%)' : 'hsl(175,80%,50%)',
+                          border: `1px solid ${status === 'error' ? 'hsl(0,40%,25%)' : status === 'done' ? 'hsl(140,30%,25%)' : 'hsl(220,15%,22%)'}`,
+                        }}
+                      >
+                        {status === 'error' ? `❌ ${pipelineError}` : STATUS_LABELS[status] || ''}
+                        {isProcessing && (
+                          <>
+                            <div className="w-full rounded-full overflow-hidden" style={{ height: 4, background: 'hsl(220,15%,22%)' }}>
+                              <div
+                                className="h-full rounded-full transition-all duration-500"
+                                style={{ width: `${progress}%`, background: 'hsl(175,80%,50%)' }}
+                              />
+                            </div>
+                          </>
+                        )}
+                        {!isProcessing && (
+                          <button
+                            onClick={() => { stop(); setReelUrl(''); }}
+                            className="mt-1 underline"
+                            style={{ color: 'hsl(215,15%,50%)' }}
+                          >
+                            Сбросить
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </>
                 )}
               </>
             ) : (

@@ -1,11 +1,12 @@
 import { useState, useCallback, useRef } from 'react';
 import type { SlideData } from '@/lib/carousel-types';
 
-const COBALT_API = 'https://cobalt-backend.canine.tools';
+const API_URL = import.meta.env.VITE_API_URL || '';
+const SESSION_KEY = 'ig_sessionid';
 
 type Status =
   | 'idle'
-  | 'turnstile'
+  | 'logging-in'
   | 'fetching-video'
   | 'downloading'
   | 'loading-model'
@@ -14,44 +15,49 @@ type Status =
   | 'done'
   | 'error';
 
-declare global {
-  interface Window {
-    turnstile?: {
-      render: (
-        el: string | HTMLElement,
-        opts: Record<string, unknown>,
-      ) => string;
-      remove: (id: string) => void;
-      reset: (id: string) => void;
-    };
-  }
+/** Read sessionid from localStorage */
+export function getSessionId(): string | null {
+  return localStorage.getItem(SESSION_KEY);
 }
 
-/** Wait until `window.turnstile` is available (script loaded). */
-function waitForTurnstile(ms = 10_000): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (window.turnstile) return resolve();
-    const start = Date.now();
-    const iv = setInterval(() => {
-      if (window.turnstile) { clearInterval(iv); resolve(); return; }
-      if (Date.now() - start > ms) {
-        clearInterval(iv);
-        reject(new Error(
-          'Скрипт Turnstile не загрузился. Открой страницу в обычном браузере (Chrome / Firefox) и обнови её.'
-        ));
-      }
-    }, 200);
+/** Save sessionid to localStorage */
+export function setSessionId(id: string) {
+  localStorage.setItem(SESSION_KEY, id);
+}
+
+/** Clear sessionid */
+export function clearSession() {
+  localStorage.removeItem(SESSION_KEY);
+}
+
+/** Login to Instagram via /api/login → returns sessionid */
+async function loginInstagram(username: string, password: string): Promise<string> {
+  const res = await fetch(`${API_URL}/api/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password }),
   });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || `Ошибка входа (${res.status})`);
+  if (!data.sessionid) throw new Error('Сервер не вернул sessionid');
+  return data.sessionid;
 }
 
-/** Fetch Turnstile sitekey from cobalt API server info. */
-async function fetchSitekey(): Promise<string> {
-  const res = await fetch(COBALT_API, { headers: { Accept: 'application/json' } });
-  if (!res.ok) throw new Error(`cobalt API недоступен (${res.status})`);
+/** Fetch video URL via /api/reel */
+async function fetchVideoUrl(reelUrl: string, sessionid: string): Promise<string> {
+  const res = await fetch(`${API_URL}/api/reel`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url: reelUrl, sessionid }),
+  });
   const data = await res.json();
-  const key = data?.cobalt?.turnstileSitekey;
-  if (!key) throw new Error('cobalt не сообщил Turnstile sitekey');
-  return key;
+  if (res.status === 401) {
+    clearSession();
+    throw new Error('Сессия Instagram истекла — войди снова');
+  }
+  if (!res.ok) throw new Error(data.error || `Ошибка получения видео (${res.status})`);
+  if (!data.videoUrl) throw new Error('Сервер не вернул ссылку на видео');
+  return data.videoUrl;
 }
 
 export function useReelToCarousel() {
@@ -67,101 +73,21 @@ export function useReelToCarousel() {
     setProgress(0);
   }, []);
 
-  // ── Turnstile ──────────────────────────────────────────────
-  const getTurnstileToken = async (): Promise<string> => {
-    await waitForTurnstile();
-
-    const sitekey = await fetchSitekey();
-
-    return new Promise((resolve, reject) => {
-      // Container MUST be in the layout flow — not display:none and not 0×0.
-      // Turnstile invisible widget needs ≥1×1 visible pixel.
-      let container = document.getElementById('cf-turnstile');
-      if (!container) {
-        container = document.createElement('div');
-        container.id = 'cf-turnstile';
-        container.style.cssText =
-          'position:fixed;bottom:0;right:0;width:65px;height:65px;overflow:hidden;z-index:99999;opacity:0.01;pointer-events:none';
-        document.body.appendChild(container);
-      }
-      container.innerHTML = '';
-
-      const timer = setTimeout(() => {
-        reject(new Error(
-          'Turnstile таймаут. Открой страницу в обычном браузере (Chrome или Firefox) вместо встроенного.'
-        ));
-      }, 20_000);
-
-      try {
-        window.turnstile!.render(container, {
-          sitekey,
-          callback: (token: string) => {
-            clearTimeout(timer);
-            resolve(token);
-          },
-          'error-callback': (code: string) => {
-            clearTimeout(timer);
-            reject(new Error(
-              `Turnstile ошибка [${code || '?'}]. Попробуй в Chrome/Firefox.`
-            ));
-          },
-          'expired-callback': () => {
-            clearTimeout(timer);
-            reject(new Error('Turnstile токен истёк — попробуй ещё раз'));
-          },
-          size: 'compact',
-          theme: 'dark',
-          appearance: 'interaction-only',
-          retry: 'auto',
-          'retry-interval': 2000,
-        });
-      } catch (e) {
-        clearTimeout(timer);
-        reject(e instanceof Error ? e : new Error(String(e)));
-      }
-    });
-  };
-
-  // ── Cobalt JWT ─────────────────────────────────────────────
-  const getJwt = async (turnstileToken: string): Promise<string> => {
-    const res = await fetch(`${COBALT_API}/session`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify({ turnstileResponse: turnstileToken }),
-    });
-    if (!res.ok) {
-      const t = await res.text().catch(() => '');
-      throw new Error(`Cobalt session error (${res.status}): ${t.slice(0, 150)}`);
+  /** Login and save session */
+  const login = useCallback(async (username: string, password: string) => {
+    setStatus('logging-in');
+    setError('');
+    try {
+      const sessionid = await loginInstagram(username, password);
+      setSessionId(sessionid);
+      setStatus('idle');
+      return true;
+    } catch (e: unknown) {
+      setStatus('error');
+      setError(e instanceof Error ? e.message : 'Ошибка входа');
+      return false;
     }
-    const d = await res.json();
-    return d.token || d.jwt || (() => { throw new Error('Cobalt не вернул JWT'); })();
-  };
-
-  // ── Cobalt audio URL ──────────────────────────────────────
-  const getAudioUrl = async (reelUrl: string, jwt: string): Promise<string> => {
-    const res = await fetch(COBALT_API, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-        Authorization: `Bearer ${jwt}`,
-      },
-      body: JSON.stringify({ url: reelUrl, downloadMode: 'audio', audioFormat: 'wav' }),
-    });
-    if (!res.ok) {
-      const t = await res.text().catch(() => '');
-      throw new Error(`Cobalt ошибка (${res.status}): ${t.slice(0, 150)}`);
-    }
-    const d = await res.json();
-    if (d.status === 'tunnel' || d.status === 'redirect') return d.url;
-    if (d.status === 'error') {
-      const c = d.error?.code || 'unknown';
-      if (c.includes('video.unavailable') || c.includes('post.unavailable'))
-        throw new Error('Видео недоступно — возможно, аккаунт приватный или ссылка неверна');
-      throw new Error(`Cobalt: ${c}`);
-    }
-    throw new Error(`Cobalt: неожиданный ответ "${d.status}"`);
-  };
+  }, []);
 
   // ── Main pipeline ─────────────────────────────────────────
   const process = useCallback(
@@ -171,41 +97,37 @@ export function useReelToCarousel() {
       setTranscript('');
       setProgress(0);
 
+      const sessionid = getSessionId();
+      if (!sessionid) {
+        setStatus('error');
+        setError('Сначала войди в Instagram');
+        return;
+      }
+
       try {
-        // 1. Turnstile
-        setStatus('turnstile');
-        setProgress(5);
-        const token = await getTurnstileToken();
-        if (abortRef.current) return;
-
-        // 2. JWT
-        setProgress(10);
-        const jwt = await getJwt(token);
-        if (abortRef.current) return;
-
-        // 3. Audio URL
+        // 1. Get video URL from Instagram API
         setStatus('fetching-video');
-        setProgress(15);
-        const audioUrl = await getAudioUrl(reelUrl, jwt);
+        setProgress(10);
+        const videoUrl = await fetchVideoUrl(reelUrl, sessionid);
         if (abortRef.current) return;
 
-        // 4. Download
+        // 2. Download video/audio
         setStatus('downloading');
         setProgress(20);
-        const resp = await fetch(audioUrl, { mode: 'cors' });
-        if (!resp.ok) throw new Error(`Не удалось скачать аудио: HTTP ${resp.status}`);
+        const resp = await fetch(videoUrl);
+        if (!resp.ok) throw new Error(`Не удалось скачать видео: HTTP ${resp.status}`);
         const buf = await resp.arrayBuffer();
         if (abortRef.current) return;
         setProgress(30);
 
-        // 5. Decode PCM
+        // 3. Decode PCM
         const ctx = new AudioContext({ sampleRate: 16000 });
         const decoded = await ctx.decodeAudioData(buf);
         const pcm = decoded.getChannelData(0);
         ctx.close();
         if (abortRef.current) return;
 
-        // 6. Whisper
+        // 4. Whisper
         setStatus('loading-model');
         setProgress(35);
         const { pipeline } = await import('@huggingface/transformers');
@@ -230,7 +152,7 @@ export function useReelToCarousel() {
         setTranscript(text);
         if (abortRef.current) return;
 
-        // 7. Slides
+        // 5. Slides
         setStatus('generating');
         setProgress(90);
         const { textToSlides } = await import('@/lib/text-to-slides');
@@ -251,5 +173,5 @@ export function useReelToCarousel() {
     [],
   );
 
-  return { status, error, transcript, progress, process, stop };
+  return { status, error, transcript, progress, process, stop, login };
 }

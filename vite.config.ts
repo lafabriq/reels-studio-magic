@@ -5,7 +5,7 @@ import { componentTagger } from "lovable-tagger";
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
-  base: process.env.NODE_ENV === 'production' ? '/reels-studio-magic/' : '/',
+  base: process.env.VERCEL ? '/' : process.env.NODE_ENV === 'production' ? '/reels-studio-magic/' : '/',
   server: {
     host: "::",
     port: 8080,
