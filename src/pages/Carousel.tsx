@@ -9,13 +9,14 @@ import SlideEditor from '@/components/carousel/SlideEditor';
 import CarouselPreview from '@/components/carousel/CarouselPreview';
 
 const STATUS_LABELS: Record<string, string> = {
-  turnstile: 'Проходим проверку…',
-  'fetching-video': 'Получаем ссылку на видео…',
-  downloading: 'Скачиваем видео…',
-  transcribing: 'Распознаём речь (модель Whisper загружается в браузер)…',
-  generating: 'Генерируем слайды…',
-  done: 'Готово!',
-  error: 'Ошибка',
+  turnstile: '🔐 Проходим проверку…',
+  'fetching-video': '🔗 Получаем ссылку на аудио…',
+  downloading: '⬇️ Скачиваем аудио из рилса…',
+  'loading-model': '🧠 Загружаем модель Whisper (первый раз ~40 МБ)…',
+  transcribing: '🎙️ Распознаём речь…',
+  generating: '🎨 Генерируем слайды…',
+  done: '✅ Готово!',
+  error: '❌ Ошибка',
 };
 
 export default function Carousel() {
