@@ -2,7 +2,6 @@ import { useState, useCallback, useRef } from 'react';
 import type { SlideData } from '@/lib/carousel-types';
 
 const COBALT_API = 'https://cobalt-backend.canine.tools';
-const TURNSTILE_SITEKEY = '0x4AAAAAABBCV3tPrCXT9h2H';
 
 type Status =
   | 'idle'
@@ -20,17 +19,39 @@ declare global {
     turnstile?: {
       render: (
         el: string | HTMLElement,
-        opts: {
-          sitekey: string;
-          callback: (token: string) => void;
-          'error-callback'?: () => void;
-          size?: string;
-          appearance?: string;
-        },
+        opts: Record<string, unknown>,
       ) => string;
       remove: (id: string) => void;
+      reset: (id: string) => void;
     };
   }
+}
+
+/** Wait until `window.turnstile` is available (script loaded). */
+function waitForTurnstile(ms = 10_000): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (window.turnstile) return resolve();
+    const start = Date.now();
+    const iv = setInterval(() => {
+      if (window.turnstile) { clearInterval(iv); resolve(); return; }
+      if (Date.now() - start > ms) {
+        clearInterval(iv);
+        reject(new Error(
+          'Скрипт Turnstile не загрузился. Открой страницу в обычном браузере (Chrome / Firefox) и обнови её.'
+        ));
+      }
+    }, 200);
+  });
+}
+
+/** Fetch Turnstile sitekey from cobalt API server info. */
+async function fetchSitekey(): Promise<string> {
+  const res = await fetch(COBALT_API, { headers: { Accept: 'application/json' } });
+  if (!res.ok) throw new Error(`cobalt API недоступен (${res.status})`);
+  const data = await res.json();
+  const key = data?.cobalt?.turnstileSitekey;
+  if (!key) throw new Error('cobalt не сообщил Turnstile sitekey');
+  return key;
 }
 
 export function useReelToCarousel() {
@@ -46,66 +67,77 @@ export function useReelToCarousel() {
     setProgress(0);
   }, []);
 
-  /** Get Turnstile token via invisible widget */
-  const getTurnstileToken = (): Promise<string> =>
-    new Promise((resolve, reject) => {
-      if (!window.turnstile) {
-        reject(new Error('Turnstile не загружен. Обнови страницу (Ctrl+Shift+R).'));
-        return;
-      }
+  // ── Turnstile ──────────────────────────────────────────────
+  const getTurnstileToken = async (): Promise<string> => {
+    await waitForTurnstile();
 
-      let container = document.getElementById('turnstile-container');
+    const sitekey = await fetchSitekey();
+
+    return new Promise((resolve, reject) => {
+      // Container MUST be in the layout flow — not display:none and not 0×0.
+      // Turnstile invisible widget needs ≥1×1 visible pixel.
+      let container = document.getElementById('cf-turnstile');
       if (!container) {
         container = document.createElement('div');
-        container.id = 'turnstile-container';
-        // Turnstile REQUIRES container to NOT be display:none
-        // Position it offscreen but technically "visible"
+        container.id = 'cf-turnstile';
         container.style.cssText =
-          'position:fixed;bottom:-1px;right:-1px;width:1px;height:1px;overflow:hidden;opacity:0.01;pointer-events:none;z-index:-1';
+          'position:fixed;bottom:0;right:0;width:65px;height:65px;overflow:hidden;z-index:99999;opacity:0.01;pointer-events:none';
         document.body.appendChild(container);
       }
       container.innerHTML = '';
 
-      const timeout = setTimeout(() => {
-        reject(new Error('Turnstile таймаут — попробуй ещё раз'));
-      }, 15_000);
+      const timer = setTimeout(() => {
+        reject(new Error(
+          'Turnstile таймаут. Открой страницу в обычном браузере (Chrome или Firefox) вместо встроенного.'
+        ));
+      }, 20_000);
 
-      const widgetId = window.turnstile.render(container, {
-        sitekey: TURNSTILE_SITEKEY,
-        callback: (token: string) => {
-          clearTimeout(timeout);
-          window.turnstile?.remove(widgetId);
-          resolve(token);
-        },
-        'error-callback': () => {
-          clearTimeout(timeout);
-          window.turnstile?.remove(widgetId);
-          reject(new Error('Проверка Turnstile не пройдена. Попробуй ещё раз.'));
-        },
-        size: 'invisible',
-      });
+      try {
+        window.turnstile!.render(container, {
+          sitekey,
+          callback: (token: string) => {
+            clearTimeout(timer);
+            resolve(token);
+          },
+          'error-callback': (code: string) => {
+            clearTimeout(timer);
+            reject(new Error(
+              `Turnstile ошибка [${code || '?'}]. Попробуй в Chrome/Firefox.`
+            ));
+          },
+          'expired-callback': () => {
+            clearTimeout(timer);
+            reject(new Error('Turnstile токен истёк — попробуй ещё раз'));
+          },
+          size: 'compact',
+          theme: 'dark',
+          appearance: 'interaction-only',
+          retry: 'auto',
+          'retry-interval': 2000,
+        });
+      } catch (e) {
+        clearTimeout(timer);
+        reject(e instanceof Error ? e : new Error(String(e)));
+      }
     });
+  };
 
-  /** Get JWT session from cobalt */
+  // ── Cobalt JWT ─────────────────────────────────────────────
   const getJwt = async (turnstileToken: string): Promise<string> => {
     const res = await fetch(`${COBALT_API}/session`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
       body: JSON.stringify({ turnstileResponse: turnstileToken }),
     });
-
     if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      throw new Error(`Ошибка авторизации cobalt (${res.status}): ${text.slice(0, 150)}`);
+      const t = await res.text().catch(() => '');
+      throw new Error(`Cobalt session error (${res.status}): ${t.slice(0, 150)}`);
     }
-
-    const data = await res.json();
-    const jwt = data.token || data.jwt;
-    if (!jwt) throw new Error('Cobalt не вернул JWT');
-    return jwt;
+    const d = await res.json();
+    return d.token || d.jwt || (() => { throw new Error('Cobalt не вернул JWT'); })();
   };
 
-  /** Get audio URL from cobalt */
+  // ── Cobalt audio URL ──────────────────────────────────────
   const getAudioUrl = async (reelUrl: string, jwt: string): Promise<string> => {
     const res = await fetch(COBALT_API, {
       method: 'POST',
@@ -114,36 +146,24 @@ export function useReelToCarousel() {
         Accept: 'application/json',
         Authorization: `Bearer ${jwt}`,
       },
-      body: JSON.stringify({
-        url: reelUrl,
-        downloadMode: 'audio',
-        audioFormat: 'wav',
-      }),
+      body: JSON.stringify({ url: reelUrl, downloadMode: 'audio', audioFormat: 'wav' }),
     });
-
     if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      throw new Error(`Cobalt ошибка (${res.status}): ${text.slice(0, 150)}`);
+      const t = await res.text().catch(() => '');
+      throw new Error(`Cobalt ошибка (${res.status}): ${t.slice(0, 150)}`);
     }
-
-    const data = await res.json();
-
-    if (data.status === 'tunnel' || data.status === 'redirect') {
-      return data.url;
+    const d = await res.json();
+    if (d.status === 'tunnel' || d.status === 'redirect') return d.url;
+    if (d.status === 'error') {
+      const c = d.error?.code || 'unknown';
+      if (c.includes('video.unavailable') || c.includes('post.unavailable'))
+        throw new Error('Видео недоступно — возможно, аккаунт приватный или ссылка неверна');
+      throw new Error(`Cobalt: ${c}`);
     }
-    if (data.status === 'error') {
-      const code = data.error?.code || 'unknown';
-      if (code.includes('content.video.unavailable')) {
-        throw new Error('Видео недоступно — возможно, аккаунт приватный');
-      }
-      if (code.includes('content.post.unavailable')) {
-        throw new Error('Пост не найден — проверь ссылку');
-      }
-      throw new Error(`Cobalt: ${code}`);
-    }
-    throw new Error(`Cobalt: неожиданный статус "${data.status}"`);
+    throw new Error(`Cobalt: неожиданный ответ "${d.status}"`);
   };
 
+  // ── Main pipeline ─────────────────────────────────────────
   const process = useCallback(
     async (reelUrl: string, onSlides: (slides: SlideData[]) => void) => {
       abortRef.current = false;
@@ -152,85 +172,69 @@ export function useReelToCarousel() {
       setProgress(0);
 
       try {
-        // Step 1 — Turnstile
+        // 1. Turnstile
         setStatus('turnstile');
         setProgress(5);
-        const turnstileToken = await getTurnstileToken();
+        const token = await getTurnstileToken();
         if (abortRef.current) return;
 
-        // Step 2 — JWT
+        // 2. JWT
         setProgress(10);
-        const jwt = await getJwt(turnstileToken);
+        const jwt = await getJwt(token);
         if (abortRef.current) return;
 
-        // Step 3 — Get audio URL via cobalt
+        // 3. Audio URL
         setStatus('fetching-video');
         setProgress(15);
         const audioUrl = await getAudioUrl(reelUrl, jwt);
         if (abortRef.current) return;
 
-        // Step 4 — Download audio
+        // 4. Download
         setStatus('downloading');
         setProgress(20);
         const resp = await fetch(audioUrl, { mode: 'cors' });
         if (!resp.ok) throw new Error(`Не удалось скачать аудио: HTTP ${resp.status}`);
-        const audioBlob = await resp.arrayBuffer();
+        const buf = await resp.arrayBuffer();
         if (abortRef.current) return;
-
         setProgress(30);
 
-        // Decode audio to PCM float32 at 16kHz
-        const audioCtx = new AudioContext({ sampleRate: 16000 });
-        const decoded = await audioCtx.decodeAudioData(audioBlob);
-        const audioData = decoded.getChannelData(0);
-        audioCtx.close();
+        // 5. Decode PCM
+        const ctx = new AudioContext({ sampleRate: 16000 });
+        const decoded = await ctx.decodeAudioData(buf);
+        const pcm = decoded.getChannelData(0);
+        ctx.close();
         if (abortRef.current) return;
 
-        // Step 5 — Load Whisper model
+        // 6. Whisper
         setStatus('loading-model');
         setProgress(35);
-
         const { pipeline } = await import('@huggingface/transformers');
         if (abortRef.current) return;
-
         setProgress(45);
-
-        const transcriber = await pipeline(
-          'automatic-speech-recognition',
-          'onnx-community/whisper-tiny',
-          { dtype: 'q8', device: 'wasm' },
-        );
+        const asr = await pipeline('automatic-speech-recognition', 'onnx-community/whisper-tiny', {
+          dtype: 'q8', device: 'wasm',
+        });
         if (abortRef.current) return;
 
-        // Step 6 — Transcribe
         setStatus('transcribing');
         setProgress(60);
-
-        const result = await transcriber(audioData, {
-          language: 'russian',
-          task: 'transcribe',
-          chunk_length_s: 30,
-          stride_length_s: 5,
-          return_timestamps: false,
+        const raw = await asr(pcm, {
+          language: 'russian', task: 'transcribe',
+          chunk_length_s: 30, stride_length_s: 5, return_timestamps: false,
         });
-
-        const text = Array.isArray(result)
-          ? result.map((r: { text: string }) => r.text).join(' ')
-          : (result as { text: string }).text;
-
-        const finalTranscript = text.trim();
-        if (!finalTranscript) throw new Error('Речь не распознана — возможно, в рилсе только музыка');
-
-        setTranscript(finalTranscript);
+        const text = (Array.isArray(raw)
+          ? raw.map((r: { text: string }) => r.text).join(' ')
+          : (raw as { text: string }).text
+        ).trim();
+        if (!text) throw new Error('Речь не распознана — возможно, в рилсе только музыка');
+        setTranscript(text);
         if (abortRef.current) return;
 
-        // Step 7 — Generate slides
+        // 7. Slides
         setStatus('generating');
         setProgress(90);
-
         const { textToSlides } = await import('@/lib/text-to-slides');
-        const slides = textToSlides(finalTranscript);
-
+        const slides = textToSlides(text);
         if (slides.length > 0) {
           onSlides(slides);
           setStatus('done');

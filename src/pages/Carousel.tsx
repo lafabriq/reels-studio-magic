@@ -121,7 +121,9 @@ export default function Carousel() {
             {mode === 'url' ? (
               <>
                 <p className="text-xs" style={{ color: 'hsl(215,15%,50%)' }}>
-                  Вставь ссылку на Instagram Reel — видео скачается, транскрибируется и превратится в карусель автоматически
+                  Вставь ссылку на Instagram Reel — видео скачается и превратится в карусель.
+                  <br />
+                  <span style={{ color: 'hsl(30,80%,60%)' }}>⚠ Работает в Chrome и Firefox. Встроенные браузеры (VS Code, Telegram) не поддерживаются.</span>
                 </p>
                 <input
                   type="url"
